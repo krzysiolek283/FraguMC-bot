@@ -411,14 +411,17 @@ def save_json(path, data):
 
 
 def parse_duration(text):
-    """'10m' -> sekundy. None przy bledzie."""
+    """'10m', '1h30m', '1d 2h' -> sekundy. None przy bledzie."""
     if not text:
         return None
-    m = re.fullmatch(r"(\d+)\s*([smhd])", text.strip().lower())
-    if not m:
+    text = text.strip().lower()
+    parts = re.findall(r"(\d+)\s*([smhd])", text)
+    if not parts:
         return None
-    value, unit = int(m.group(1)), m.group(2)
-    return value * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+    if re.sub(r"\d+\s*[smhd]", "", text).strip():
+        return None
+    total = sum(int(v) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[u] for v, u in parts)
+    return total or None
 
 
 def format_duration(seconds):
