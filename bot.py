@@ -730,7 +730,7 @@ async def end_giveaway(message_id):
     return winners
 
 
-@tasks.loop(seconds=30)
+@tasks.loop(seconds=5)
 async def giveaway_loop():
     all_gw = load_json(GIVEAWAYS_FILE, {})
     now = time.time()
