@@ -3,7 +3,10 @@ import base64
 import io
 import json
 import os
+import random
 import re
+import time
+from datetime import timedelta
 
 import discord
 from discord import app_commands
@@ -229,8 +232,10 @@ async def on_ready():
     await bot.tree.sync()
     for guild in bot.guilds:
         await bot.tree.sync(guild=guild)
-    if not autostatus_loop.is_running():
-        autostatus_loop.start()
+    bot.add_view(GiveawayView())
+    for _loop in (autostatus_loop, giveaway_loop, tempban_loop):
+        if not _loop.is_running():
+            _loop.start()
     print(f"Zalogowano jako {bot.user} (ID: {bot.user.id})")
 
 
@@ -380,5 +385,428 @@ async def server_remove(interaction: discord.Interaction):
 
 
 bot.tree.add_command(server_group)
+
+
+# ================= MODERACJA, GIVEAWAYE, KONFIG =================
+
+WARNS_FILE = os.path.join(os.path.dirname(__file__), "warns.json")
+TEMPBANS_FILE = os.path.join(os.path.dirname(__file__), "tempbans.json")
+GIVEAWAYS_FILE = os.path.join(os.path.dirname(__file__), "giveaways.json")
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
+
+
+def load_json(path, default):
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return default
+
+
+def save_json(path, data):
+    with open(path, "w") as f:
+        json.dump(data, f)
+
+
+def parse_duration(text):
+    """'10m' -> sekundy. None przy bledzie."""
+    if not text:
+        return None
+    m = re.fullmatch(r"(\d+)\s*([smhd])", text.strip().lower())
+    if not m:
+        return None
+    value, unit = int(m.group(1)), m.group(2)
+    return value * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+
+
+def format_duration(seconds):
+    if seconds < 60:
+        return f"{seconds} s"
+    if seconds < 3600:
+        return f"{seconds // 60} min"
+    if seconds < 86400:
+        return f"{seconds // 3600} h"
+    return f"{seconds // 86400} d"
+
+
+def find_kary_channel(guild):
+    cfg = load_json(CONFIG_FILE, {}).get(str(guild.id), {})
+    ch_id = cfg.get("kary_channel")
+    if ch_id:
+        ch = guild.get_channel(int(ch_id))
+        if ch:
+            return ch
+    for ch in guild.text_channels:
+        if "kary" in ch.name.lower():
+            return ch
+    return None
+
+
+async def log_kara(guild, embed):
+    ch = find_kary_channel(guild)
+    if ch is None:
+        return False
+    try:
+        await ch.send(embed=embed)
+        return True
+    except Exception:
+        return False
+
+
+def kara_embed(rodzaj, uzytkownik, mod, powod, czas=None, kolor=discord.Color.red(), extra=None):
+    embed = discord.Embed(title=f"{rodzaj} — {uzytkownik}", color=kolor)
+    try:
+        embed.set_thumbnail(url=uzytkownik.display_avatar.url)
+    except Exception:
+        pass
+    embed.add_field(name="Użytkownik", value=f"{uzytkownik.mention} (`{uzytkownik.id}`)", inline=False)
+    embed.add_field(name="Moderator", value=mod.mention, inline=True)
+    if czas:
+        embed.add_field(name="Czas", value=czas, inline=True)
+    embed.add_field(name="Powód", value=powod, inline=False)
+    if extra:
+        embed.add_field(name="Info", value=extra, inline=False)
+    embed.timestamp = discord.utils.utcnow()
+    return embed
+
+
+@bot.tree.error
+async def on_tree_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    try:
+        if isinstance(error, app_commands.MissingPermissions):
+            msg = "⛔ Nie masz uprawnień do tej komendy."
+        elif isinstance(error, app_commands.NoPrivateMessage):
+            msg = "⛔ Tej komendy można użyć tylko na serwerze."
+        else:
+            msg = f"⚠️ Błąd: {error}"
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except Exception:
+        pass
+
+
+# ---------- Moderacja ----------
+
+@bot.tree.command(name="warn", description="Daje ostrzeżenie użytkownikowi")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(manage_messages=True)
+async def warn_cmd(interaction: discord.Interaction, uzytkownik: discord.Member, powod: str = "Brak powodu"):
+    warns = load_json(WARNS_FILE, {})
+    g = warns.setdefault(str(interaction.guild_id), {})
+    u = g.setdefault(str(uzytkownik.id), [])
+    u.append({"reason": powod, "mod": str(interaction.user.id), "ts": int(time.time())})
+    save_json(WARNS_FILE, warns)
+    embed = kara_embed("⚠️ WARN", uzytkownik, interaction.user, powod,
+                       extra=f"Liczba warnów użytkownika: {len(u)}",
+                       kolor=discord.Color.orange())
+    ok = await log_kara(interaction.guild, embed)
+    await interaction.response.send_message(
+        f"✅ {uzytkownik.mention} otrzymał warna ({len(u)})."
+        + (" Zapisano na kanale kar." if ok else " ⚠️ Nie znaleziono kanału kar (ustaw w /config)."),
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="mute", description="Wycisza użytkownika (timeout)")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(moderate_members=True)
+async def mute_cmd(interaction: discord.Interaction, uzytkownik: discord.Member,
+                   czas: str = "10m", powod: str = "Brak powodu"):
+    seconds = parse_duration(czas)
+    if not seconds or seconds > 28 * 86400:
+        await interaction.response.send_message("⚠️ Zły format czasu (np. 10m, 1h, 2d, max 28d).", ephemeral=True)
+        return
+    try:
+        await uzytkownik.timeout(timedelta(seconds=seconds), reason=powod)
+    except discord.Forbidden:
+        await interaction.response.send_message("⛔ Nie mogę wyciszyć (rola bota za nisko lub brak uprawnień).", ephemeral=True)
+        return
+    embed = kara_embed("🔇 MUTE", uzytkownik, interaction.user, powod, czas=format_duration(seconds))
+    ok = await log_kara(interaction.guild, embed)
+    await interaction.response.send_message(
+        f"✅ Wyciszono {uzytkownik.mention} na {format_duration(seconds)}."
+        + ("" if ok else " ⚠️ Nie znaleziono kanału kar (ustaw w /config)."),
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="kick", description="Wyrzuca użytkownika z serwera")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(kick_members=True)
+async def kick_cmd(interaction: discord.Interaction, uzytkownik: discord.Member, powod: str = "Brak powodu"):
+    try:
+        await uzytkownik.kick(reason=powod)
+    except discord.Forbidden:
+        await interaction.response.send_message("⛔ Nie mogę wyrzucić (rola bota za nisko lub brak uprawnień).", ephemeral=True)
+        return
+    embed = kara_embed("👢 KICK", uzytkownik, interaction.user, powod, kolor=discord.Color.dark_red())
+    ok = await log_kara(interaction.guild, embed)
+    await interaction.response.send_message(
+        f"✅ Wyrzucono {uzytkownik.mention}."
+        + ("" if ok else " ⚠️ Nie znaleziono kanału kar (ustaw w /config)."),
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="ban", description="Banuje użytkownika (opcjonalnie na czas)")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(ban_members=True)
+async def ban_cmd(interaction: discord.Interaction, uzytkownik: discord.Member,
+                  powod: str = "Brak powodu", czas: str = None):
+    seconds = parse_duration(czas) if czas else None
+    if czas and not seconds:
+        await interaction.response.send_message("⚠️ Zły format czasu (np. 10m, 1h, 7d).", ephemeral=True)
+        return
+    try:
+        await interaction.guild.ban(uzytkownik, reason=powod)
+    except discord.Forbidden:
+        await interaction.response.send_message("⛔ Nie mogę zbanować (rola bota za nisko lub brak uprawnień).", ephemeral=True)
+        return
+    extra = None
+    if seconds:
+        bans = load_json(TEMPBANS_FILE, {})
+        g = bans.setdefault(str(interaction.guild_id), {})
+        g[str(uzytkownik.id)] = time.time() + seconds
+        save_json(TEMPBANS_FILE, bans)
+        extra = f"Automatyczne odbanowanie za: {format_duration(seconds)}"
+    embed = kara_embed("🔨 BAN", uzytkownik, interaction.user, powod,
+                       czas=format_duration(seconds) if seconds else None, extra=extra)
+    ok = await log_kara(interaction.guild, embed)
+    await interaction.response.send_message(
+        f"✅ Zbanowano {uzytkownik.mention}" + (f" na {format_duration(seconds)}." if seconds else ".")
+        + ("" if ok else " ⚠️ Nie znaleziono kanału kar (ustaw w /config)."),
+        ephemeral=True,
+    )
+
+
+@tasks.loop(minutes=1)
+async def tempban_loop():
+    bans = load_json(TEMPBANS_FILE, {})
+    if not bans:
+        return
+    now = time.time()
+    changed = False
+    for guild_id, users in list(bans.items()):
+        guild = bot.get_guild(int(guild_id))
+        if guild is None:
+            continue
+        for user_id, ts in list(users.items()):
+            if ts <= now:
+                try:
+                    await guild.unban(discord.Object(id=int(user_id)), reason="Koniec czasowego bana")
+                except Exception:
+                    pass
+                users.pop(user_id, None)
+                changed = True
+    if changed:
+        save_json(TEMPBANS_FILE, bans)
+
+
+# ---------- Giveawaye ----------
+
+class GiveawayView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Weź udział 🎉", style=discord.ButtonStyle.green, custom_id="gw_join")
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        all_gw = load_json(GIVEAWAYS_FILE, {})
+        gw = all_gw.get(str(interaction.message.id))
+        if not gw or gw.get("ended"):
+            await interaction.response.send_message("Ten giveaway już się zakończył.", ephemeral=True)
+            return
+        uid = str(interaction.user.id)
+        parts = gw["participants"]
+        if uid in parts:
+            parts.remove(uid)
+            msg = "Wypisano z giveawaya."
+        else:
+            parts.append(uid)
+            msg = "Zapisano! Powodzenia 🍀"
+        all_gw[str(interaction.message.id)]["participants"] = parts
+        save_json(GIVEAWAYS_FILE, all_gw)
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+def giveaway_embed(nagroda, winners_count, ends_at, participants=0):
+    embed = discord.Embed(title="🎉 GIVEAWAY", description=f"**{nagroda}**", color=discord.Color.gold())
+    embed.add_field(name="Zwycięzców", value=str(winners_count), inline=True)
+    embed.add_field(name="Koniec", value=f"<t:{int(ends_at)}:R>", inline=True)
+    embed.add_field(name="Uczestnicy", value=str(participants), inline=True)
+    embed.add_field(name="Jak wziąć udział?", value="Kliknij przycisk poniżej 👇", inline=False)
+    return embed
+
+
+async def end_giveaway(message_id):
+    all_gw = load_json(GIVEAWAYS_FILE, {})
+    gw = all_gw.get(str(message_id))
+    if not gw or gw.get("ended"):
+        return None
+    try:
+        channel = bot.get_channel(gw["channel"])
+        if channel is None:
+            channel = await bot.fetch_channel(gw["channel"])
+        msg = await channel.fetch_message(int(message_id))
+    except Exception:
+        gw["ended"] = True
+        save_json(GIVEAWAYS_FILE, all_gw)
+        return None
+    parts = gw["participants"]
+    winners = random.sample(parts, min(gw["winners"], len(parts))) if parts else []
+    if winners:
+        mentions = ", ".join(f"<@{w}>" for w in winners)
+        embed = discord.Embed(title="🎉 GIVEAWAY ZAKOŃCZONY", color=discord.Color.gold())
+        embed.add_field(name="Nagroda", value=gw["prize"], inline=False)
+        embed.add_field(name="Zwycięzcy", value=mentions, inline=False)
+        await msg.edit(embed=embed, view=None)
+        await channel.send(f"🎉 Gratulacje {mentions}! Wygrałeś: **{gw['prize']}**")
+    else:
+        embed = discord.Embed(title="🎉 GIVEAWAY ZAKOŃCZONY", description="Brak uczestników.", color=discord.Color.greyple())
+        await msg.edit(embed=embed, view=None)
+        await channel.send("Giveaway zakończony — nikt nie wziął udziału.")
+    gw["ended"] = True
+    gw["winners_ids"] = winners
+    save_json(GIVEAWAYS_FILE, all_gw)
+    return winners
+
+
+@tasks.loop(minutes=1)
+async def giveaway_loop():
+    all_gw = load_json(GIVEAWAYS_FILE, {})
+    now = time.time()
+    for mid, gw in list(all_gw.items()):
+        if not gw.get("ended") and gw.get("ends_at", 0) <= now:
+            await end_giveaway(mid)
+
+
+giveaway_group = app_commands.Group(name="giveaway", description="Giveawaye")
+
+
+@giveaway_group.command(name="start", description="Startuje giveaway")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(manage_messages=True)
+async def gstart(interaction: discord.Interaction, czas: str,
+                 zwyciezcy: app_commands.Range[int, 1, 20], nagroda: str,
+                 kanal: discord.TextChannel = None):
+    seconds = parse_duration(czas)
+    if not seconds or seconds < 30:
+        await interaction.response.send_message("⚠️ Czas min. 30s (format np. 10m, 1h, 2d).", ephemeral=True)
+        return
+    channel = kanal or interaction.channel
+    ends_at = time.time() + seconds
+    msg = await channel.send(embed=giveaway_embed(nagroda, zwyciezcy, ends_at), view=GiveawayView())
+    all_gw = load_json(GIVEAWAYS_FILE, {})
+    all_gw[str(msg.id)] = {
+        "guild": interaction.guild_id,
+        "channel": channel.id,
+        "prize": nagroda,
+        "winners": zwyciezcy,
+        "ends_at": ends_at,
+        "participants": [],
+        "ended": False,
+    }
+    save_json(GIVEAWAYS_FILE, all_gw)
+    await interaction.response.send_message(f"✅ Giveaway wystartowany na {channel.mention}.", ephemeral=True)
+
+
+def find_giveaway(guild_id, channel_id, active):
+    all_gw = load_json(GIVEAWAYS_FILE, {})
+    cands = [(mid, g) for mid, g in all_gw.items()
+             if g.get("guild") == guild_id and g.get("channel") == channel_id
+             and (not g.get("ended")) == active]
+    cands.sort(key=lambda x: x[1].get("ends_at", 0), reverse=True)
+    return cands[0] if cands else (None, None)
+
+
+@giveaway_group.command(name="end", description="Wcześniej kończy giveaway")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(manage_messages=True)
+async def gend(interaction: discord.Interaction, wiadomosc_id: str = None):
+    if wiadomosc_id:
+        winners = await end_giveaway(wiadomosc_id.strip())
+        if winners is None:
+            await interaction.response.send_message("⚠️ Nie znaleziono aktywnego giveawaya o tym ID.", ephemeral=True)
+        else:
+            await interaction.response.send_message("✅ Giveaway zakończony.", ephemeral=True)
+        return
+    mid, _ = find_giveaway(interaction.guild_id, interaction.channel_id, True)
+    if not mid:
+        await interaction.response.send_message("⚠️ Brak aktywnego giveawaya na tym kanale (lub podaj ID wiadomości).", ephemeral=True)
+        return
+    await end_giveaway(mid)
+    await interaction.response.send_message("✅ Giveaway zakończony.", ephemeral=True)
+
+
+@giveaway_group.command(name="reroll", description="Losuje nowych zwycięzców")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(manage_messages=True)
+async def greroll(interaction: discord.Interaction, wiadomosc_id: str = None):
+    all_gw = load_json(GIVEAWAYS_FILE, {})
+    gw = None
+    if wiadomosc_id:
+        gw = all_gw.get(wiadomosc_id.strip())
+    else:
+        cands = [(mid, g) for mid, g in all_gw.items()
+                 if g.get("guild") == interaction.guild_id and g.get("ended") and g.get("participants")]
+        cands.sort(key=lambda x: x[1].get("ends_at", 0), reverse=True)
+        if cands:
+            _, gw = cands[0]
+    if not gw or not gw.get("participants"):
+        await interaction.response.send_message("⚠️ Brak zakończonego giveawaya z uczestnikami.", ephemeral=True)
+        return
+    winners = random.sample(gw["participants"], min(gw["winners"], len(gw["participants"])))
+    mentions = ", ".join(f"<@{w}>" for w in winners)
+    await interaction.channel.send(f"🎉 Ponowne losowanie! Wygrał(a): {mentions} — **{gw['prize']}**")
+    await interaction.response.send_message("✅ Wylosowano ponownie.", ephemeral=True)
+
+
+bot.tree.add_command(giveaway_group)
+
+
+# ---------- Panel konfiguracyjny ----------
+
+class KaryChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self):
+        super().__init__(placeholder="Wybierz kanał kar", channel_types=[discord.ChannelType.text])
+
+    async def callback(self, interaction: discord.Interaction):
+        ch = self.values[0]
+        cfg = load_json(CONFIG_FILE, {})
+        g = cfg.setdefault(str(interaction.guild_id), {})
+        g["kary_channel"] = ch.id
+        save_json(CONFIG_FILE, cfg)
+        await interaction.response.send_message(f"✅ Kanał kar ustawiony: {ch.mention}", ephemeral=True)
+
+
+class ConfigView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(KaryChannelSelect())
+
+
+@bot.tree.command(name="config", description="Panel konfiguracyjny bota")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(manage_guild=True)
+async def config_cmd(interaction: discord.Interaction):
+    address, _, mc_name = load_server()
+    cfg = load_json(CONFIG_FILE, {}).get(str(interaction.guild_id), {})
+    kary_ch = None
+    if cfg.get("kary_channel"):
+        kary_ch = interaction.guild.get_channel(int(cfg["kary_channel"]))
+    if kary_ch is None:
+        kary_ch = find_kary_channel(interaction.guild)
+    embed = discord.Embed(title="⚙️ Konfiguracja bota", color=discord.Color.blurple())
+    embed.add_field(name="Kanał kar", value=kary_ch.mention if kary_ch else "— (wybierz poniżej)", inline=False)
+    embed.add_field(name="Serwer MC", value=f"**{mc_name}** (`{address}`)" if address else "— (dodaj przez /server add)", inline=False)
+    n_auto = len(load_autostatus())
+    embed.add_field(name="Auto-statusy", value=str(n_auto), inline=True)
+    n_gw = sum(1 for g in load_json(GIVEAWAYS_FILE, {}).values() if not g.get("ended"))
+    embed.add_field(name="Aktywne giveawaye", value=str(n_gw), inline=True)
+    await interaction.response.send_message(embed=embed, view=ConfigView(), ephemeral=True)
+
 
 bot.run(TOKEN)

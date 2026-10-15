@@ -2,5 +2,9 @@
 bot.log
 server.json
 autostatus.json
+warns.json
+tempbans.json
+giveaways.json
+config.json
 __pycache__/
 *.pyc
