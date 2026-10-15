@@ -611,28 +611,70 @@ async def tempban_loop():
 
 # ---------- Giveawaye ----------
 
+gw_lock = asyncio.Lock()
+
+
+async def set_participation(message_id, user_id, desired=None):
+    """Dodaje/usuwa uczestnika i odswieza licznik. Zwraca joined albo None gdy nieaktywny."""
+    async with gw_lock:
+        all_gw = load_json(GIVEAWAYS_FILE, {})
+        gw = all_gw.get(str(message_id))
+        if not gw or gw.get("ended"):
+            return None
+        parts = gw["participants"]
+        uid = str(user_id)
+        if desired is None:
+            desired = uid not in parts
+        if desired and uid not in parts:
+            parts.append(uid)
+        elif not desired and uid in parts:
+            parts.remove(uid)
+        save_json(GIVEAWAYS_FILE, all_gw)
+        try:
+            channel = bot.get_channel(gw["channel"])
+            if channel is None:
+                channel = await bot.fetch_channel(gw["channel"])
+            msg = await channel.fetch_message(int(message_id))
+            await msg.edit(
+                embed=giveaway_embed(gw["prize"], gw["winners"], gw["ends_at"], len(parts)),
+                view=GiveawayView(),
+            )
+        except Exception:
+            pass
+        return desired
+
+
 class GiveawayView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="Weź udział 🎉", style=discord.ButtonStyle.green, custom_id="gw_join")
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
-        all_gw = load_json(GIVEAWAYS_FILE, {})
-        gw = all_gw.get(str(interaction.message.id))
-        if not gw or gw.get("ended"):
+        result = await set_participation(interaction.message.id, interaction.user.id)
+        if result is None:
             await interaction.response.send_message("Ten giveaway już się zakończył.", ephemeral=True)
-            return
-        uid = str(interaction.user.id)
-        parts = gw["participants"]
-        if uid in parts:
-            parts.remove(uid)
-            msg = "Wypisano z giveawaya."
+        elif result:
+            await interaction.response.send_message(
+                "Zapisano! Powodzenia 🍀",
+                view=UnjoinView(str(interaction.message.id)),
+                ephemeral=True,
+            )
         else:
-            parts.append(uid)
-            msg = "Zapisano! Powodzenia 🍀"
-        all_gw[str(interaction.message.id)]["participants"] = parts
-        save_json(GIVEAWAYS_FILE, all_gw)
-        await interaction.response.send_message(msg, ephemeral=True)
+            await interaction.response.send_message("Wypisano z giveawaya.", ephemeral=True)
+
+
+class UnjoinView(discord.ui.View):
+    def __init__(self, message_id):
+        super().__init__(timeout=None)
+        self.message_id = message_id
+
+    @discord.ui.button(label="Wypisz się", style=discord.ButtonStyle.red, custom_id="gw_leave")
+    async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        result = await set_participation(self.message_id, interaction.user.id, False)
+        if result is None:
+            await interaction.response.edit_message(content="Ten giveaway już się zakończył.", view=None)
+        else:
+            await interaction.response.edit_message(content="Wypisano z giveawaya.", view=None)
 
 
 def giveaway_embed(nagroda, winners_count, ends_at, participants=0):
