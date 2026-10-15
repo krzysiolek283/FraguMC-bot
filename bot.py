@@ -650,17 +650,28 @@ class GiveawayView(discord.ui.View):
 
     @discord.ui.button(label="Weź udział 🎉", style=discord.ButtonStyle.green, custom_id="gw_join")
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
-        result = await set_participation(interaction.message.id, interaction.user.id)
+        all_gw = load_json(GIVEAWAYS_FILE, {})
+        gw = all_gw.get(str(interaction.message.id))
+        uid = str(interaction.user.id)
+        if not gw or gw.get("ended"):
+            await interaction.response.send_message("Ten giveaway już się zakończył.", ephemeral=True)
+            return
+        if uid in gw["participants"]:
+            await interaction.response.send_message(
+                "Już jesteś zapisany! Czy chcesz się wypisać?",
+                view=UnjoinView(str(interaction.message.id)),
+                ephemeral=True,
+            )
+            return
+        result = await set_participation(interaction.message.id, interaction.user.id, True)
         if result is None:
             await interaction.response.send_message("Ten giveaway już się zakończył.", ephemeral=True)
-        elif result:
+        else:
             await interaction.response.send_message(
                 "Zapisano! Powodzenia 🍀",
                 view=UnjoinView(str(interaction.message.id)),
                 ephemeral=True,
             )
-        else:
-            await interaction.response.send_message("Wypisano z giveawaya.", ephemeral=True)
 
 
 class UnjoinView(discord.ui.View):
