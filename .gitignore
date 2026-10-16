@@ -6,5 +6,6 @@ warns.json
 tempbans.json
 giveaways.json
 config.json
+perms.json
 __pycache__/
 *.pyc
