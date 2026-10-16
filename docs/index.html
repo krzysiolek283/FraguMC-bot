@@ -92,11 +92,13 @@ main{padding:16px}.grid2{grid-template-columns:1fr}}
 
 <div class="tab" id="sec-kary"><section class="card"><h3>🚫 Kanał kar</h3>
 <div class="desc">Tu bot zgłasza warny, muty, kicki i bany.</div>
+<label>Aktualnie</label><pre id="kary_cur">—</pre>
 <label>Kanał<select id="kary"></select></label></section></div>
 
-<div class="tab" id="sec-prop"><section class="card"><h3>💡 Kanały propozycji</h3>
-<div class="desc">Zaznaczone kanały zamieniają wiadomości na głosowania z wątkiem.</div>
-<div id="propchecks"></div></section></div>
+<div class="tab" id="sec-prop"><section class="card"><h3>💡 Kanał propozycji</h3>
+<div class="desc">Wiadomości zamieniane na głosowania z wątkiem (jeden kanał).</div>
+<label>Aktualnie</label><pre id="prop_cur">—</pre>
+<label>Kanał<select id="propchan"></select></label></section></div>
 
 <div class="tab" id="sec-mod"><section class="card"><h3>🧩 Moduły</h3>
 <div class="desc">Włączaj i wyłączaj funkcje bota. Zmiana działa od razu.</div>
@@ -156,13 +158,25 @@ async function loadGuild(){
   const ch=await jget('/channels?guild_id='+gid());
   if(!ch.ok){say('Błąd kanałów: '+ch.error,false);return;}
   channels=ch.channels;
-  document.getElementById('kary').innerHTML=channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
+  const ksel=document.getElementById('kary');
+  ksel.innerHTML=channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
+  const psel=document.getElementById('propchan');
+  psel.innerHTML=`<option value="">— brak —</option>`+channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
   const ov=await jget('/overview');
   const cfg=(ov.config||{})[gid()]||{};
-  if(cfg.kary_channel)document.getElementById('kary').value=String(cfg.kary_channel);
+  const kid=cfg.kary_channel?String(cfg.kary_channel):'';
+  if(kid&&![...ksel.options].some(o=>o.value===kid)){
+    const o=document.createElement('option');o.value=kid;o.textContent='(usunięty kanał '+kid+')';ksel.appendChild(o);
+  }
+  ksel.value=kid;
   const propIds=(cfg.propozycje||[]).map(String);
-  document.getElementById('propchecks').innerHTML=channels.map(c=>
-    `<label class="check"><input type="checkbox" value="${c.id}"${propIds.includes(String(c.id))?' checked':''}> #${c.name}</label>`).join('');
+  const pid=propIds.length?propIds[propIds.length-1]:'';
+  if(pid&&![...psel.options].some(o=>o.value===pid)){
+    const o=document.createElement('option');o.value=pid;o.textContent='(usunięty kanał '+pid+')';psel.appendChild(o);
+  }
+  psel.value=pid;
+  document.getElementById('kary_cur').textContent=kid?cname(kid):'(nie ustawiono)';
+  document.getElementById('prop_cur').textContent=pid?cname(pid):'(nie ustawiono)';
   renderMods(cfg);
 }
 async function saveAll(){
@@ -176,7 +190,8 @@ async function saveAll(){
   }
   const kr=await jpost('/kary',{guild_id:gid(),channel_id:document.getElementById('kary').value});
   if(!kr.ok){say('Błąd kanału kar: '+kr.error,false);return;}
-  const want=[...document.querySelectorAll('#propchecks input:checked')].map(i=>String(i.value));
+  const psingle=document.getElementById('propchan').value;
+  const want=psingle?[String(psingle)]:[];
   const ov=await jget('/overview');
   const cur=(((ov.config||{})[gid()]||{}).propozycje||[]).map(String);
   for(const cid of want.filter(x=>!cur.includes(x)))
