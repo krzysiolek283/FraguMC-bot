@@ -270,35 +270,9 @@ async def status(interaction: discord.Interaction):
     data = await asyncio.to_thread(fetch_mc_status, address, server_type)
     embed, favicon = build_status_embed(data, address, name)
     if favicon:
-        await interaction.channel.send(embed=embed, file=favicon)
+        await interaction.followup.send(embed=embed, file=favicon, ephemeral=True)
     else:
-        await interaction.channel.send(embed=embed)
-    await interaction.followup.send("Wysłano!", ephemeral=True)
-
-
-@bot.tree.command(name="gracze", description="Lista graczy online")
-async def gracze(interaction: discord.Interaction):
-    address, server_type, name = await require_server(interaction)
-    if not address:
-        return
-    await interaction.response.defer(ephemeral=True)
-    data = await asyncio.to_thread(fetch_mc_status, address, server_type)
-    if not data.get("online"):
-        await interaction.channel.send(f"🔴 Serwer **{name}** jest offline.")
-    elif not data.get("sample"):
-        await interaction.channel.send(
-            f"🟢 Na serwerze **{name}** jest **{data['players_online']}** graczy, "
-            "ale serwer nie udostępnia ich nicków."
-        )
-    else:
-        names = "\n".join(f"• {n}" for n in data["sample"])
-        embed = discord.Embed(
-            title=f"{name} — gracze online ({data['players_online']}/{data['players_max']})",
-            description=names,
-            color=discord.Color.green(),
-        )
-        await interaction.channel.send(embed=embed)
-    await interaction.followup.send("Wysłano!", ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 autostatus = app_commands.Group(name="autostatus", description="Automatyczny status serwera")
