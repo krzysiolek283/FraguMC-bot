@@ -206,6 +206,8 @@ async def refresh_autostatus():
             channel = bot.get_channel(int(channel_id))
             if channel is None:
                 channel = await bot.fetch_channel(int(channel_id))
+            if not module_on(channel.guild.id if hasattr(channel, "guild") else None, "autostatus"):
+                continue
             msg = await channel.fetch_message(int(message_id))
             if favicon:
                 favicon.fp.seek(0)
@@ -283,6 +285,9 @@ autostatus = app_commands.Group(name="autostatus", description="Automatyczny sta
 
 @autostatus.command(name="set", description="Ustawia auto-status na kanale")
 async def autoset(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not module_on(interaction.guild_id, "autostatus"):
+        await interaction.response.send_message("⛔ Moduł auto-statusu jest wyłączony.", ephemeral=True)
+        return
     address, server_type, name = await require_server(interaction)
     if not address:
         return
@@ -370,6 +375,15 @@ WARNS_FILE = os.path.join(os.path.dirname(__file__), "warns.json")
 TEMPBANS_FILE = os.path.join(os.path.dirname(__file__), "tempbans.json")
 GIVEAWAYS_FILE = os.path.join(os.path.dirname(__file__), "giveaways.json")
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
+
+MODULES = ["moderacja", "propozycje", "giveawaye", "autostatus"]
+
+
+def module_on(guild_id, name):
+    if guild_id is None:
+        return True
+    cfg = load_json(CONFIG_FILE, {}).get(str(guild_id), {})
+    return cfg.get("modules", {}).get(name, True)
 
 
 def load_json(path, default):
@@ -475,6 +489,9 @@ async def on_tree_error(interaction: discord.Interaction, error: app_commands.Ap
 @app_commands.guild_only()
 @app_commands.checks.has_permissions(manage_messages=True)
 async def warn_cmd(interaction: discord.Interaction, uzytkownik: discord.Member, powod: str = "Brak powodu"):
+    if not module_on(interaction.guild_id, "moderacja"):
+        await interaction.response.send_message("⛔ Moduł moderacji jest wyłączony.", ephemeral=True)
+        return
     warns = load_json(WARNS_FILE, {})
     g = warns.setdefault(str(interaction.guild_id), {})
     u = g.setdefault(str(uzytkownik.id), [])
@@ -496,6 +513,9 @@ async def warn_cmd(interaction: discord.Interaction, uzytkownik: discord.Member,
 @app_commands.checks.has_permissions(moderate_members=True)
 async def mute_cmd(interaction: discord.Interaction, uzytkownik: discord.Member,
                    czas: str = "10m", powod: str = "Brak powodu"):
+    if not module_on(interaction.guild_id, "moderacja"):
+        await interaction.response.send_message("⛔ Moduł moderacji jest wyłączony.", ephemeral=True)
+        return
     seconds = parse_duration(czas)
     if not seconds or seconds > 28 * 86400:
         await interaction.response.send_message("⚠️ Zły format czasu (np. 10m, 1h, 2d, max 28d).", ephemeral=True)
@@ -518,6 +538,9 @@ async def mute_cmd(interaction: discord.Interaction, uzytkownik: discord.Member,
 @app_commands.guild_only()
 @app_commands.checks.has_permissions(kick_members=True)
 async def kick_cmd(interaction: discord.Interaction, uzytkownik: discord.Member, powod: str = "Brak powodu"):
+    if not module_on(interaction.guild_id, "moderacja"):
+        await interaction.response.send_message("⛔ Moduł moderacji jest wyłączony.", ephemeral=True)
+        return
     try:
         await uzytkownik.kick(reason=powod)
     except discord.Forbidden:
@@ -537,6 +560,9 @@ async def kick_cmd(interaction: discord.Interaction, uzytkownik: discord.Member,
 @app_commands.checks.has_permissions(ban_members=True)
 async def ban_cmd(interaction: discord.Interaction, uzytkownik: discord.Member,
                   powod: str = "Brak powodu", czas: str = None):
+    if not module_on(interaction.guild_id, "moderacja"):
+        await interaction.response.send_message("⛔ Moduł moderacji jest wyłączony.", ephemeral=True)
+        return
     seconds = parse_duration(czas) if czas else None
     if czas and not seconds:
         await interaction.response.send_message("⚠️ Zły format czasu (np. 10m, 1h, 7d).", ephemeral=True)
@@ -627,6 +653,9 @@ class GiveawayView(discord.ui.View):
 
     @discord.ui.button(label="Weź udział 🎉", style=discord.ButtonStyle.green, custom_id="gw_join")
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not module_on(interaction.guild_id, "giveawaye"):
+            await interaction.response.send_message("⛔ Moduł giveawayów jest wyłączony.", ephemeral=True)
+            return
         all_gw = load_json(GIVEAWAYS_FILE, {})
         gw = all_gw.get(str(interaction.message.id))
         uid = str(interaction.user.id)
@@ -658,6 +687,9 @@ class UnjoinView(discord.ui.View):
 
     @discord.ui.button(label="Wypisz się", style=discord.ButtonStyle.red, custom_id="gw_leave")
     async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not module_on(interaction.guild_id, "giveawaye"):
+            await interaction.response.send_message("⛔ Moduł giveawayów jest wyłączony.", ephemeral=True)
+            return
         result = await set_participation(self.message_id, interaction.user.id, False)
         if result is None:
             await interaction.response.edit_message(content="Ten giveaway już się zakończył.", view=None)
@@ -713,6 +745,8 @@ async def giveaway_loop():
     now = time.time()
     for mid, gw in list(all_gw.items()):
         if not gw.get("ended") and gw.get("ends_at", 0) <= now:
+            if not module_on(gw.get("guild"), "giveawaye"):
+                continue
             await end_giveaway(mid)
 
 
@@ -725,6 +759,9 @@ giveaway_group = app_commands.Group(name="giveaway", description="Giveawaye")
 async def gstart(interaction: discord.Interaction, czas: str,
                  zwyciezcy: app_commands.Range[int, 1, 20], nagroda: str,
                  kanal: discord.TextChannel = None):
+    if not module_on(interaction.guild_id, "giveawaye"):
+        await interaction.response.send_message("⛔ Moduł giveawayów jest wyłączony.", ephemeral=True)
+        return
     seconds = parse_duration(czas)
     if not seconds or seconds < 30:
         await interaction.response.send_message("⚠️ Czas min. 30s (format np. 10m, 1h, 2d).", ephemeral=True)
@@ -759,6 +796,9 @@ def find_giveaway(guild_id, channel_id, active):
 @app_commands.guild_only()
 @app_commands.checks.has_permissions(manage_messages=True)
 async def gend(interaction: discord.Interaction, wiadomosc_id: str = None):
+    if not module_on(interaction.guild_id, "giveawaye"):
+        await interaction.response.send_message("⛔ Moduł giveawayów jest wyłączony.", ephemeral=True)
+        return
     if wiadomosc_id:
         winners = await end_giveaway(wiadomosc_id.strip())
         if winners is None:
@@ -778,6 +818,9 @@ async def gend(interaction: discord.Interaction, wiadomosc_id: str = None):
 @app_commands.guild_only()
 @app_commands.checks.has_permissions(manage_messages=True)
 async def greroll(interaction: discord.Interaction, wiadomosc_id: str = None):
+    if not module_on(interaction.guild_id, "giveawaye"):
+        await interaction.response.send_message("⛔ Moduł giveawayów jest wyłączony.", ephemeral=True)
+        return
     all_gw = load_json(GIVEAWAYS_FILE, {})
     gw = None
     if wiadomosc_id:
@@ -907,6 +950,8 @@ async def on_message(message: discord.Message):
     if message.guild is None or message.author.bot:
         return
     if message.channel.id not in get_propozycje(message.guild.id):
+        return
+    if not module_on(message.guild.id, "propozycje"):
         return
     tresc = (message.content or "").strip()
     if not tresc:
@@ -1082,6 +1127,29 @@ async def api_mc_status(request):
                    "status": data})
 
 
+async def api_modules(request):
+    if not await api_auth(request):
+        return api_err("Brak autoryzacji", 401)
+    try:
+        body = await request.json()
+    except Exception:
+        return api_err("Zły JSON")
+    name = body.get("module")
+    if name not in MODULES:
+        return api_err("Nieznany moduł")
+    try:
+        guild_id = str(int(body.get("guild_id")))
+    except Exception:
+        return api_err("Zły serwer")
+    enabled = bool(body.get("enabled"))
+    cfg = load_json(CONFIG_FILE, {})
+    g = cfg.setdefault(guild_id, {})
+    mods = g.setdefault("modules", {})
+    mods[name] = enabled
+    save_json(CONFIG_FILE, cfg)
+    return api_ok({"module": name, "enabled": enabled})
+
+
 async def start_api():
     if not API_KEY:
         print("API panelu wylaczone (brak API_KEY).")
@@ -1095,6 +1163,7 @@ async def start_api():
         web.post("/propozycje", api_prop),
         web.get("/channels", api_channels),
         web.get("/mcstatus", api_mc_status),
+        web.post("/modules", api_modules),
     ])
     runner = web.AppRunner(app)
     await runner.setup()

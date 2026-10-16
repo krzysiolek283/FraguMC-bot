@@ -40,6 +40,14 @@ pre{background:#0b0b0f;border:1px solid var(--border);border-radius:8px;padding:
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .check{display:flex;align-items:center;gap:10px;background:#0c0c10;border:1px solid var(--border);border-radius:8px;padding:9px 12px;margin-top:6px;font-size:14px;color:var(--text);cursor:pointer}
 .check input{width:auto;margin:0;accent-color:var(--lime)}
+.modrow{display:flex;align-items:center;justify-content:space-between;background:#0c0c10;border:1px solid var(--border);border-radius:8px;padding:11px 14px;margin-top:8px}
+.modrow b{font-size:14px}.modrow small{display:block;color:var(--muted);font-size:12px}
+.switch{position:relative;width:44px;height:24px;flex-shrink:0;cursor:pointer}
+.switch input{opacity:0;width:0;height:0}
+.sl{position:absolute;inset:0;background:#2a2a32;border-radius:20px;transition:.2s}
+.sl:before{content:'';position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;top:3px;left:3px;transition:.2s}
+.switch input:checked+.sl{background:var(--lime)}
+.switch input:checked+.sl:before{transform:translateX(20px)}
 @media(max-width:700px){body{flex-direction:column}aside{width:100%;padding-bottom:14px}
 .savebtn{position:fixed;bottom:10px;left:10px;right:10px;width:auto}
 main{padding:16px}.grid2{grid-template-columns:1fr}}
@@ -53,6 +61,7 @@ main{padding:16px}.grid2{grid-template-columns:1fr}}
 <a data-t="sec-mc">⛏️ Minecraft</a>
 <a data-t="sec-kary">🚫 Kanał kar</a>
 <a data-t="sec-prop">💡 Propozycje</a>
+<a data-t="sec-mod">🧩 Moduły</a>
 </nav>
 <button class="savebtn" onclick="saveAll()">Zapisz</button>
 </aside>
@@ -88,11 +97,15 @@ main{padding:16px}.grid2{grid-template-columns:1fr}}
 <div class="tab" id="sec-prop"><section class="card"><h3>💡 Kanały propozycji</h3>
 <div class="desc">Zaznaczone kanały zamieniają wiadomości na głosowania z wątkiem.</div>
 <div id="propchecks"></div></section></div>
+
+<div class="tab" id="sec-mod"><section class="card"><h3>🧩 Moduły</h3>
+<div class="desc">Włączaj i wyłączaj funkcje bota. Zmiana działa od razu.</div>
+<div id="modlist"></div></section></div>
 </main>
 
 <script>
 let channels=[], connected=false;
-const TITLES={'sec-conn':'Połączenie','sec-srv':'Serwer Discord','sec-mc':'Minecraft','sec-kary':'Kanał kar','sec-prop':'Propozycje'};
+const TITLES={'sec-conn':'Połączenie','sec-srv':'Serwer Discord','sec-mc':'Minecraft','sec-kary':'Kanał kar','sec-prop':'Propozycje','sec-mod':'Moduły'};
 document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>{
   document.querySelectorAll('nav a').forEach(x=>x.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
@@ -108,6 +121,22 @@ function say(t,ok){const m=document.getElementById('msg');m.textContent=t;
   m.style.color=ok===false?'var(--red)':'var(--lime)';
   document.getElementById('dot').classList.toggle('on',ok!==false&&t!=='Nie połączono');}
 function gid(){return document.getElementById('guild').value;}
+const MODS=[
+ ['moderacja','Moderacja','Warny, muty, kicki i bany'],
+ ['propozycje','Propozycje','Głosowania z reakcjami i wątki'],
+ ['giveawaye','Giveawaye','Konkursy z przyciskiem'],
+ ['autostatus','Auto-status','Automatyczny status serwera MC']];
+function renderMods(cfg){
+  const mods=(cfg&&cfg.modules)||{};
+  document.getElementById('modlist').innerHTML=MODS.map(m=>
+    `<div class="modrow"><div><b>${m[1]}</b><small>${m[2]}</small></div>
+     <label class="switch"><input type="checkbox" data-mod="${m[0]}"${mods[m[0]]===false?'':' checked'}><span class="sl"></span></label></div>`).join('');
+  document.querySelectorAll('#modlist input').forEach(i=>i.onchange=()=>toggleMod(i.dataset.mod,i.checked));
+}
+async function toggleMod(name,enabled){
+  const r=await jpost('/modules',{guild_id:gid(),module:name,enabled:enabled});
+  say(r.ok?`Moduł ${name}: ${enabled?'włączony ✓':'wyłączony'}`:'Błąd: '+r.error,r.ok);
+}
 
 async function connect(){
   let ov;
@@ -134,6 +163,7 @@ async function loadGuild(){
   const propIds=(cfg.propozycje||[]).map(String);
   document.getElementById('propchecks').innerHTML=channels.map(c=>
     `<label class="check"><input type="checkbox" value="${c.id}"${propIds.includes(String(c.id))?' checked':''}> #${c.name}</label>`).join('');
+  renderMods(cfg);
 }
 async function saveAll(){
   if(!connected){say('Najpierw połącz się z botem.',false);return;}
