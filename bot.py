@@ -1377,9 +1377,10 @@ def migrate_config():
         pass
 
 
-# ---------- Kreator embedów ----------
+# ---------- Kreator embedów (zaawansowany) ----------
 
 EMBED_DRAFTS = {}
+TEMPLATES_FILE = os.path.join(os.path.dirname(__file__), "templates.json")
 
 
 def parse_color(text):
@@ -1396,10 +1397,52 @@ def parse_color(text):
         return None
 
 
+def link_view(buttons):
+    if not buttons:
+        return None
+    v = discord.ui.View(timeout=None)
+    for b in buttons[:5]:
+        try:
+            v.add_item(discord.ui.Button(label=str(b.get("label") or "Link")[:80],
+                                         url=b.get("url")))
+        except Exception:
+            pass
+    return v
+
+
+async def show_preview(interaction, fresh):
+    """fresh=True: nowa wiadomosc (po modalu). False: edycja podgladu (po przycisku)."""
+    d = EMBED_DRAFTS.get(str(interaction.user.id))
+    if not d:
+        msg = "Szkic wygasł. Zacznij od nowa (/embed)."
+        if fresh:
+            await interaction.response.send_message(msg, ephemeral=True)
+        else:
+            await interaction.response.edit_message(content=msg, embed=None, view=None)
+        return
+    emb = discord.Embed.from_dict(d["embed"])
+    ping = d.get("ping") or {}
+    info = []
+    if ping.get("everyone"):
+        info.append("ping @everyone")
+    if ping.get("role_id"):
+        info.append("ping roli")
+    info.append(f"pól: {len(d['embed'].get('fields', []))}")
+    info.append(f"przycisków: {len(d.get('buttons', []))}")
+    if d.get("edit_msg"):
+        info.append("tryb edycji")
+    text = "Podgląd (" + ", ".join(info) + "):"
+    if fresh:
+        await interaction.response.send_message(text, embed=emb, view=EmbedEditView(), ephemeral=True)
+    else:
+        await interaction.response.edit_message(content=text, embed=emb, view=EmbedEditView())
+
+
 class EmbedModal(discord.ui.Modal, title="Kreator embeda"):
-    def __init__(self, channel_id):
+    def __init__(self, channel_id, ping):
         super().__init__()
         self.channel_id = channel_id
+        self.ping = ping
         self.tytul = discord.ui.TextInput(label="Tytuł", max_length=256)
         self.opis = discord.ui.TextInput(label="Opis", style=discord.TextStyle.paragraph, max_length=4000)
         self.kolor = discord.ui.TextInput(label="Kolor (hex, np. #7c5cff)", required=False, max_length=20)
@@ -1424,36 +1467,138 @@ class EmbedModal(discord.ui.Modal, title="Kreator embeda"):
             except Exception:
                 pass
         EMBED_DRAFTS[str(interaction.user.id)] = {"embed": embed.to_dict(),
-                                                   "channel": self.channel_id}
-        await interaction.response.send_message("Podgląd:", embed=embed,
-                                                view=EmbedSendView(), ephemeral=True)
+                                                   "channel": self.channel_id,
+                                                   "ping": self.ping,
+                                                   "buttons": [],
+                                                   "edit_msg": None}
+        await show_preview(interaction, fresh=True)
 
 
-class EmbedSendView(discord.ui.View):
+class FieldModal(discord.ui.Modal, title="Nowe pole"):
+    def __init__(self):
+        super().__init__()
+        self.nazwa = discord.ui.TextInput(label="Nazwa pola", max_length=256)
+        self.wartosc = discord.ui.TextInput(label="Wartość", style=discord.TextStyle.paragraph, max_length=1024)
+        self.inline = discord.ui.TextInput(label="Obok innych? (tak/nie)", default="nie", max_length=3)
+        self.add_item(self.nazwa)
+        self.add_item(self.wartosc)
+        self.add_item(self.inline)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        d = EMBED_DRAFTS.get(str(interaction.user.id))
+        if not d:
+            await interaction.response.send_message("Szkic wygasł.", ephemeral=True)
+            return
+        fields = d["embed"].setdefault("fields", [])
+        fields.append({"name": self.nazwa.value.strip() or "—",
+                       "value": self.wartosc.value.strip() or "—",
+                       "inline": self.inline.value.strip().lower().startswith(("t", "y", "1"))})
+        await show_preview(interaction, fresh=True)
+
+
+class LinkModal(discord.ui.Modal, title="Przycisk-link"):
+    def __init__(self):
+        super().__init__()
+        self.etykieta = discord.ui.TextInput(label="Etykieta", max_length=80)
+        self.url = discord.ui.TextInput(label="URL (https://…)", max_length=300)
+        self.add_item(self.etykieta)
+        self.add_item(self.url)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        d = EMBED_DRAFTS.get(str(interaction.user.id))
+        if not d:
+            await interaction.response.send_message("Szkic wygasł.", ephemeral=True)
+            return
+        url = self.url.value.strip()
+        if not url.lower().startswith(("http://", "https://")):
+            await interaction.response.send_message("⚠️ URL musi zaczynać się od http(s)://", ephemeral=True)
+            return
+        btns = d.setdefault("buttons", [])
+        if len(btns) >= 5:
+            await interaction.response.send_message("⚠️ Max 5 przycisków.", ephemeral=True)
+            return
+        btns.append({"label": self.etykieta.value.strip() or "Link", "url": url})
+        await show_preview(interaction, fresh=True)
+
+
+class EmbedEditView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=600)
 
-    @discord.ui.button(label="Wyślij", style=discord.ButtonStyle.success, emoji="📨")
+    @discord.ui.button(label="Pole", style=discord.ButtonStyle.secondary, emoji="➕")
+    async def add_field(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(FieldModal())
+
+    @discord.ui.button(label="Wyczyść pola", style=discord.ButtonStyle.secondary, emoji="🧹")
+    async def clear_fields(self, interaction: discord.Interaction, button: discord.ui.Button):
+        d = EMBED_DRAFTS.get(str(interaction.user.id))
+        if d:
+            d["embed"]["fields"] = []
+        await show_preview(interaction, fresh=False)
+
+    @discord.ui.button(label="Link", style=discord.ButtonStyle.secondary, emoji="🔗")
+    async def add_link(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(LinkModal())
+
+    @discord.ui.button(label="Usuń linki", style=discord.ButtonStyle.secondary, emoji="❌")
+    async def clear_links(self, interaction: discord.Interaction, button: discord.ui.Button):
+        d = EMBED_DRAFTS.get(str(interaction.user.id))
+        if d:
+            d["buttons"] = []
+        await show_preview(interaction, fresh=False)
+
+    @discord.ui.button(label="Wyślij / Zapisz", style=discord.ButtonStyle.success, emoji="💾")
     async def send(self, interaction: discord.Interaction, button: discord.ui.Button):
-        draft = EMBED_DRAFTS.pop(str(interaction.user.id), None)
-        if not draft:
+        d = EMBED_DRAFTS.get(str(interaction.user.id))
+        if not d:
             await interaction.response.edit_message(content="Szkic wygasł.", embed=None, view=None)
             return
-        channel = interaction.guild.get_channel(draft["channel"])
+        channel = interaction.guild.get_channel(d["channel"])
         if channel is None:
             try:
-                channel = await interaction.guild.fetch_channel(draft["channel"])
+                channel = await interaction.guild.fetch_channel(d["channel"])
             except Exception:
                 channel = None
         if channel is None:
             await interaction.response.edit_message(content="⚠️ Kanał niedostępny.", embed=None, view=None)
             return
-        try:
-            await channel.send(embed=discord.Embed.from_dict(draft["embed"]))
-        except Exception:
-            await interaction.response.edit_message(content="⚠️ Nie mogę wysłać (brak uprawnień?).", embed=None, view=None)
+        emb = discord.Embed.from_dict(d["embed"])
+        view = link_view(d.get("buttons", []))
+        if d.get("edit_msg"):
+            try:
+                msg = await channel.fetch_message(int(d["edit_msg"]))
+            except Exception:
+                msg = None
+            if msg is None:
+                await interaction.response.edit_message(content="⚠️ Oryginalna wiadomość zniknęła.",
+                                                        embed=None, view=None)
+                return
+            try:
+                await msg.edit(embed=emb, view=view)
+            except Exception:
+                await interaction.response.edit_message(content="⚠️ Nie mogę edytować.", embed=None, view=None)
+                return
+            EMBED_DRAFTS.pop(str(interaction.user.id), None)
+            await interaction.response.edit_message(content="✅ Zapisano zmiany.", embed=None, view=None)
             return
-        await interaction.response.edit_message(content=f"✅ Wysłano na {channel.mention}.", embed=None, view=None)
+        ping = d.get("ping") or {}
+        bits = []
+        if ping.get("everyone"):
+            bits.append("@everyone")
+        if ping.get("role_id"):
+            bits.append(f"<@&{ping['role_id']}>")
+        content = " ".join(bits) if bits else None
+        allowed = discord.AllowedMentions(everyone=bool(ping.get("everyone")),
+                                          roles=True, users=False) if bits else None
+        try:
+            await channel.send(content=content, embed=emb, view=view, allowed_mentions=allowed)
+        except Exception:
+            await interaction.response.edit_message(content="⚠️ Nie mogę wysłać (brak uprawnień?).",
+                                                    embed=None, view=None)
+            return
+        EMBED_DRAFTS.pop(str(interaction.user.id), None)
+        await interaction.response.edit_message(content=f"✅ Wysłano na {channel.mention}.",
+                                                embed=None, view=None)
 
     @discord.ui.button(label="Anuluj", style=discord.ButtonStyle.secondary, emoji="❌")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1464,10 +1609,105 @@ class EmbedSendView(discord.ui.View):
 @bot.tree.command(name="embed", description="Kreator embedów")
 @app_commands.guild_only()
 @app_commands.check(require_perm("embed", "manage_messages"))
-async def embed_cmd(interaction: discord.Interaction, kanal: discord.TextChannel = None):
+async def embed_cmd(interaction: discord.Interaction, kanal: discord.TextChannel = None,
+                    everyone: bool = False, rola: discord.Role = None):
     target = kanal or interaction.channel
-    await interaction.response.send_modal(EmbedModal(target.id))
+    ping = {"everyone": bool(everyone), "role_id": str(rola.id) if rola else None}
+    await interaction.response.send_modal(EmbedModal(target.id, ping))
 
+
+@bot.tree.command(name="embed-edytuj", description="Edytuje wysłanego embeda")
+@app_commands.guild_only()
+@app_commands.check(require_perm("embed", "manage_messages"))
+async def embed_edit_cmd(interaction: discord.Interaction, wiadomosc_id: str,
+                         kanal: discord.TextChannel = None):
+    channel = kanal or interaction.channel
+    try:
+        msg = await channel.fetch_message(int(wiadomosc_id.strip()))
+    except Exception:
+        msg = None
+    if msg is None or not msg.embeds:
+        await interaction.response.send_message("⚠️ Nie znaleziono wiadomości z embedem.", ephemeral=True)
+        return
+    btns = []
+    try:
+        for row in msg.components:
+            for c in getattr(row, "children", []):
+                url = getattr(c, "url", None)
+                if url:
+                    btns.append({"label": getattr(c, "label", None) or "Link", "url": url})
+    except Exception:
+        pass
+    EMBED_DRAFTS[str(interaction.user.id)] = {"embed": msg.embeds[0].to_dict(),
+                                               "channel": channel.id,
+                                               "ping": {},
+                                               "buttons": btns[:5],
+                                               "edit_msg": str(msg.id)}
+    await show_preview(interaction, fresh=True)
+
+
+szablon_group = app_commands.Group(name="szablon", description="Szablony embedów")
+
+
+@szablon_group.command(name="zapisz", description="Zapisuje aktualny szkic jako szablon")
+@app_commands.guild_only()
+@app_commands.check(require_perm("embed", "manage_messages"))
+async def szablon_zapisz(interaction: discord.Interaction, nazwa: str):
+    d = EMBED_DRAFTS.get(str(interaction.user.id))
+    if not d:
+        await interaction.response.send_message("⚠️ Brak szkicu — najpierw użyj /embed.", ephemeral=True)
+        return
+    t = load_json(TEMPLATES_FILE, {})
+    g = t.setdefault(str(interaction.guild_id), {})
+    key = nazwa.strip()[:50] or "bez-nazwy"
+    g[key] = {"embed": d["embed"], "buttons": d.get("buttons", []), "ping": d.get("ping", {})}
+    save_json(TEMPLATES_FILE, t)
+    await interaction.response.send_message(f"✅ Zapisano szablon **{key}**.", ephemeral=True)
+
+
+@szablon_group.command(name="wczytaj", description="Wczytuje szablon do wysyłki")
+@app_commands.guild_only()
+@app_commands.check(require_perm("embed", "manage_messages"))
+async def szablon_wczytaj(interaction: discord.Interaction, nazwa: str,
+                          kanal: discord.TextChannel = None):
+    g = load_json(TEMPLATES_FILE, {}).get(str(interaction.guild_id), {})
+    tpl = g.get(nazwa.strip())
+    if not tpl:
+        known = ", ".join(f"`{k}`" for k in g) or "brak szablonów"
+        await interaction.response.send_message(f"⚠️ Nie ma takiego szablonu. Dostępne: {known}", ephemeral=True)
+        return
+    channel = kanal or interaction.channel
+    EMBED_DRAFTS[str(interaction.user.id)] = {"embed": tpl["embed"],
+                                               "channel": channel.id,
+                                               "ping": tpl.get("ping", {}),
+                                               "buttons": tpl.get("buttons", []),
+                                               "edit_msg": None}
+    await show_preview(interaction, fresh=True)
+
+
+@szablon_group.command(name="lista", description="Lista szablonów")
+@app_commands.guild_only()
+@app_commands.check(require_perm("embed", "manage_messages"))
+async def szablon_lista(interaction: discord.Interaction):
+    g = load_json(TEMPLATES_FILE, {}).get(str(interaction.guild_id), {})
+    await interaction.response.send_message(
+        "Szablony: " + (", ".join(f"`{k}`" for k in g) if g else "brak"), ephemeral=True)
+
+
+@szablon_group.command(name="usun", description="Usuwa szablon")
+@app_commands.guild_only()
+@app_commands.check(require_perm("embed", "manage_messages"))
+async def szablon_usun(interaction: discord.Interaction, nazwa: str):
+    t = load_json(TEMPLATES_FILE, {})
+    g = t.setdefault(str(interaction.guild_id), {})
+    if g.pop(nazwa.strip(), None) is None:
+        await interaction.response.send_message("⚠️ Nie ma takiego szablonu.", ephemeral=True)
+        return
+    save_json(TEMPLATES_FILE, t)
+    await interaction.response.send_message(f"🗑️ Usunięto szablon **{nazwa.strip()}**.", ephemeral=True)
+
+
+bot.tree.add_command(szablon_group)
 
 migrate_config()
 

@@ -7,5 +7,6 @@ tempbans.json
 giveaways.json
 config.json
 perms.json
+templates.json
 __pycache__/
 *.pyc
