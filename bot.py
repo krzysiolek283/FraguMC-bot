@@ -280,6 +280,57 @@ async def status(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 
+PERMS_FILE = os.path.join(os.path.dirname(__file__), "perms.json")
+
+PERM_FUNCS = [
+    ("warn", "Warn"),
+    ("mute", "Mute"),
+    ("kick", "Kick"),
+    ("ban", "Ban"),
+    ("giveaway", "Giveawaye"),
+    ("propozycje", "Propozycje"),
+    ("autostatus", "Auto-status"),
+    ("server", "Serwer MC"),
+    ("config", "Konfiguracja"),
+]
+
+MOD_LABELS = {
+    "moderacja": "Moderacja",
+    "propozycje": "Propozycje",
+    "giveawaye": "Giveawaye",
+    "autostatus": "Auto-status",
+}
+
+
+def load_perms():
+    return load_json(PERMS_FILE, {})
+
+
+def save_perms(data):
+    save_json(PERMS_FILE, data)
+
+
+def require_perm(func, discord_perm):
+    """Check: administrator zawsze moze; potem /permisje; na koncu uprawnienie Discorda."""
+    async def predicate(interaction: discord.Interaction):
+        if interaction.guild is None:
+            return False
+        me = interaction.user
+        if isinstance(me, discord.Member) and me.guild_permissions.administrator:
+            return True
+        entry = load_perms().get(str(interaction.guild_id), {}).get(func, {})
+        users = {str(x) for x in entry.get("users", [])}
+        roles = {str(x) for x in entry.get("roles", [])}
+        if users or roles:
+            if str(me.id) in users:
+                return True
+            if isinstance(me, discord.Member) and any(str(r.id) in roles for r in me.roles):
+                return True
+            return False
+        return getattr(me.guild_permissions, discord_perm, False)
+    return predicate
+
+
 autostatus = app_commands.Group(name="autostatus", description="Automatyczny status serwera")
 
 
@@ -394,57 +445,6 @@ def module_on(guild_id, name):
         return True
     cfg = load_json(CONFIG_FILE, {}).get(str(guild_id), {})
     return cfg.get("modules", {}).get(name, True)
-
-
-PERMS_FILE = os.path.join(os.path.dirname(__file__), "perms.json")
-
-PERM_FUNCS = [
-    ("warn", "Warn"),
-    ("mute", "Mute"),
-    ("kick", "Kick"),
-    ("ban", "Ban"),
-    ("giveaway", "Giveawaye"),
-    ("propozycje", "Propozycje"),
-    ("autostatus", "Auto-status"),
-    ("server", "Serwer MC"),
-    ("config", "Konfiguracja"),
-]
-
-MOD_LABELS = {
-    "moderacja": "Moderacja",
-    "propozycje": "Propozycje",
-    "giveawaye": "Giveawaye",
-    "autostatus": "Auto-status",
-}
-
-
-def load_perms():
-    return load_json(PERMS_FILE, {})
-
-
-def save_perms(data):
-    save_json(PERMS_FILE, data)
-
-
-def require_perm(func, discord_perm):
-    """Check: administrator zawsze moze; potem /permisje; na koncu uprawnienie Discorda."""
-    async def predicate(interaction: discord.Interaction):
-        if interaction.guild is None:
-            return False
-        me = interaction.user
-        if isinstance(me, discord.Member) and me.guild_permissions.administrator:
-            return True
-        entry = load_perms().get(str(interaction.guild_id), {}).get(func, {})
-        users = {str(x) for x in entry.get("users", [])}
-        roles = {str(x) for x in entry.get("roles", [])}
-        if users or roles:
-            if str(me.id) in users:
-                return True
-            if isinstance(me, discord.Member) and any(str(r.id) in roles for r in me.roles):
-                return True
-            return False
-        return getattr(me.guild_permissions, discord_perm, False)
-    return predicate
 
 
 def load_json(path, default):
