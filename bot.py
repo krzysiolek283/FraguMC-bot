@@ -941,6 +941,19 @@ async def on_message(message: discord.Message):
 
 # ================= API DO PANELU =================
 
+@web.middleware
+async def cors_middleware(request, handler):
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
+    }
+    if request.method == "OPTIONS":
+        return web.Response(headers=headers)
+    resp = await handler(request)
+    resp.headers.update(headers)
+    return resp
+
 async def api_auth(request):
     return bool(API_KEY) and request.headers.get("X-API-Key", "") == API_KEY
 
@@ -1073,7 +1086,7 @@ async def start_api():
     if not API_KEY:
         print("API panelu wylaczone (brak API_KEY).")
         return
-    app = web.Application()
+    app = web.Application(middlewares=[cors_middleware])
     app.add_routes([
         web.get("/overview", api_overview),
         web.post("/server", api_set_server),

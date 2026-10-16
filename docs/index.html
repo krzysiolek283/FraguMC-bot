@@ -1,0 +1,104 @@
+<!doctype html><html lang="pl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FraguMC-bot — panel</title>
+<style>body{font-family:sans-serif;max-width:640px;margin:auto;padding:16px}
+section{border:1px solid #ccc;border-radius:8px;padding:12px;margin:12px 0}
+label{display:block;margin-top:8px}input,select{width:100%;padding:6px;margin-top:2px;box-sizing:border-box}
+button{margin-top:10px;padding:8px 14px}#msg{color:green;white-space:pre-wrap}
+.row{display:flex;gap:8px}.row>label{flex:1}</style>
+</head><body>
+<h2>FraguMC-bot — panel</h2>
+<div id="msg"></div>
+
+<section><h3>Połączenie</h3>
+<div class="row">
+<label>Host<input id="host" value="fi15.bot-hosting.net"></label>
+<label>Port<input id="port" value="26269"></label>
+</div>
+<label>Klucz API<input id="key" type="password" placeholder="wklej API_KEY"></label>
+<button onclick="connect()">Połącz</button></section>
+
+<section><h3>Serwer</h3>
+<label>Serwer Discord<select id="guild"></select></label></section>
+
+<section><h3>Serwer Minecraft</h3>
+<label>Adres<input id="mc_addr"></label>
+<label>Nazwa<input id="mc_name"></label>
+<button onclick="saveServer()">Zapisz</button>
+<button onclick="delServer()">Usuń</button>
+<button onclick="checkStatus()">Sprawdź status</button>
+<pre id="mcstatus"></pre></section>
+
+<section><h3>Kanał kar</h3>
+<label>Kanał<select id="kary"></select></label>
+<button onclick="saveKary()">Zapisz kanał kar</button></section>
+
+<section><h3>Kanały propozycji</h3>
+<div id="proplist"></div>
+<label>Kanał<select id="propchan"></select></label>
+<button onclick="propAdd()">Dodaj</button>
+<button onclick="propDel()">Usuń</button></section>
+
+<script>
+let channels=[];
+function base(){return `http://${document.getElementById('host').value.trim()}:${document.getElementById('port').value.trim()}`;}
+function hdrs(){return {'Content-Type':'application/json','X-API-Key':document.getElementById('key').value.trim()};}
+async function jget(p){const r=await fetch(base()+p,{headers:hdrs()});return r.json();}
+async function jpost(p,b){const r=await fetch(base()+p,{method:'POST',headers:hdrs(),body:JSON.stringify(b)});return r.json();}
+function say(t){document.getElementById('msg').textContent=t;}
+function gid(){return document.getElementById('guild').value;}
+function cname(id){const c=channels.find(x=>String(x.id)===String(id));return c?'#'+c.name:id;}
+
+async function connect(){
+  let ov;
+  try{ov=await jget('/overview');}
+  catch(e){say('Błąd połączenia — sprawdź host/port i czy bot działa.');return;}
+  if(!ov.ok){say('Błąd: '+(ov.error||'zły klucz?'));return;}
+  say('Połączono ✓');
+  document.getElementById('guild').innerHTML=ov.guilds.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
+  if(ov.mc_server&&ov.mc_server.address){
+    document.getElementById('mc_addr').value=ov.mc_server.address||'';
+    document.getElementById('mc_name').value=ov.mc_server.name||'';
+  }
+  await loadGuild();
+}
+async function loadGuild(){
+  const ch=await jget('/channels?guild_id='+gid());
+  if(!ch.ok){say('Błąd kanałów: '+ch.error);return;}
+  channels=ch.channels;
+  const opts=channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
+  document.getElementById('kary').innerHTML=opts;
+  document.getElementById('propchan').innerHTML=opts;
+  const ov=await jget('/overview');
+  const cfg=(ov.config||{})[gid()]||{};
+  if(cfg.kary_channel)document.getElementById('kary').value=String(cfg.kary_channel);
+  const propIds=(cfg.propozycje||[]).map(String);
+  document.getElementById('proplist').innerHTML=propIds.length?propIds.map(cname).join(', '):'(brak)';
+}
+async function saveServer(){
+  const r=await jpost('/server',{address:document.getElementById('mc_addr').value,name:document.getElementById('mc_name').value});
+  say(r.ok?`Zapisano: ${r.name} (${r.address}, ${r.type})`:'Błąd: '+r.error);
+}
+async function delServer(){
+  if(!confirm('Usunąć serwer?'))return;
+  const r=await fetch(base()+'/server',{method:'DELETE',headers:hdrs()}).then(x=>x.json());
+  say(r.ok?'Usunięto':'Błąd: '+r.error);
+}
+async function checkStatus(){
+  const r=await jget('/mcstatus');
+  document.getElementById('mcstatus').textContent=JSON.stringify(r,null,1);
+}
+async function saveKary(){
+  const r=await jpost('/kary',{guild_id:gid(),channel_id:document.getElementById('kary').value});
+  say(r.ok?'Zapisano kanał kar':'Błąd: '+r.error);
+}
+async function propAdd(){
+  const r=await jpost('/propozycje',{guild_id:gid(),channel_id:document.getElementById('propchan').value,action:'add'});
+  if(r.ok)loadGuild();else say('Błąd: '+r.error);
+}
+async function propDel(){
+  const r=await jpost('/propozycje',{guild_id:gid(),channel_id:document.getElementById('propchan').value,action:'remove'});
+  if(r.ok)loadGuild();else say('Błąd: '+r.error);
+}
+document.getElementById('guild').addEventListener('change',loadGuild);
+</script></body></html>
