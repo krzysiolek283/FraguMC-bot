@@ -901,14 +901,33 @@ async def on_message(message: discord.Message):
         return
     if message.channel.id not in get_propozycje(message.guild.id):
         return
+    tresc = (message.content or "").strip()
+    if not tresc:
+        return
+    autor = message.author
+    embed = discord.Embed(description=tresc, color=discord.Color.blurple())
     try:
-        await message.add_reaction("✅")
-        await message.add_reaction("❌")
+        embed.set_author(name=autor.display_name, icon_url=autor.display_avatar.url)
     except Exception:
         pass
+    embed.set_footer(text=f"Zaproponował: {autor} • {autor.id}")
+    embed.timestamp = discord.utils.utcnow()
     try:
-        tytul = (message.content or "Propozycja").strip().split("\n")[0][:80] or "Propozycja"
-        await message.create_thread(name=f"💡 {tytul}", auto_archive_duration=1440)
+        post = await message.channel.send(embed=embed)
+    except Exception:
+        return
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    for emoji in ("✅", "➖", "❌"):
+        try:
+            await post.add_reaction(emoji)
+        except Exception:
+            pass
+    try:
+        tytul = tresc.split("\n")[0][:80] or "Propozycja"
+        await post.create_thread(name=f"💡 {tytul}", auto_archive_duration=1440)
     except Exception:
         pass
 
