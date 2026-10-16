@@ -1713,9 +1713,6 @@ async def szablon_usun(interaction: discord.Interaction, nazwa: str):
 bot.tree.add_command(szablon_group)
 
 
-bot.tree.add_command(szablon_group)
-
-
 # ---------- Tickety ----------
 
 TICKETS_FILE = os.path.join(os.path.dirname(__file__), "tickets.json")
