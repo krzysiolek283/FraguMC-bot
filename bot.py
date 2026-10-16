@@ -9,6 +9,7 @@ import time
 from datetime import timedelta
 
 import discord
+from aiohttp import web
 from discord import app_commands
 from discord.ext import commands, tasks
 from mcstatus import BedrockServer, JavaServer
@@ -27,6 +28,9 @@ load_env(os.path.join(os.path.dirname(__file__), ".env"))
 TOKEN = os.getenv("DISCORD_TOKEN", "")
 if not TOKEN:
     raise SystemExit("Brak DISCORD_TOKEN — ustaw go w pliku .env")
+
+API_KEY = os.getenv("API_KEY", "")
+API_PORT = int(os.getenv("API_PORT", "8080"))
 
 
 # --- Konfiguracja ---
@@ -222,6 +226,9 @@ async def autostatus_loop():
 
 @bot.event
 async def on_ready():
+    if not getattr(bot, "_api_started", False):
+        bot._api_started = True
+        bot.loop.create_task(start_api())
     for guild in bot.guilds:
         bot.tree.copy_global_to(guild=guild)
     bot.tree.clear_commands(guild=None)
@@ -930,6 +937,156 @@ async def on_message(message: discord.Message):
         await post.create_thread(name=f"💡 {tytul}", auto_archive_duration=1440)
     except Exception:
         pass
+
+
+# ================= API DO PANELU =================
+
+async def api_auth(request):
+    return bool(API_KEY) and request.headers.get("X-API-Key", "") == API_KEY
+
+
+def api_ok(data=None):
+    return web.json_response({"ok": True, **(data or {})})
+
+
+def api_err(msg, status=400):
+    return web.json_response({"ok": False, "error": msg}, status=status)
+
+
+async def api_overview(request):
+    if not await api_auth(request):
+        return api_err("Brak autoryzacji", 401)
+    address, server_type, mc_name = load_server()
+    active_gw = {mid: {"prize": g["prize"], "channel": g["channel"],
+                       "ends_at": g["ends_at"], "participants": len(g["participants"])}
+                 for mid, g in load_json(GIVEAWAYS_FILE, {}).items() if not g.get("ended")}
+    return api_ok({
+        "guilds": [{"id": str(g.id), "name": g.name} for g in bot.guilds],
+        "mc_server": {"address": address, "type": server_type, "name": mc_name},
+        "autostatus": load_autostatus(),
+        "config": load_json(CONFIG_FILE, {}),
+        "giveaways": active_gw,
+    })
+
+
+async def api_set_server(request):
+    if not await api_auth(request):
+        return api_err("Brak autoryzacji", 401)
+    try:
+        body = await request.json()
+    except Exception:
+        return api_err("Zły JSON")
+    address = (body.get("address") or "").strip()
+    name = (body.get("name") or "").strip() or SERVER_NAME
+    if not address:
+        return api_err("Brak adresu")
+    server_type = await asyncio.to_thread(detect_server_type, address)
+    if server_type is None:
+        return api_err("Nie udało się połączyć z serwerem. Sprawdź adres.")
+    save_server(address, server_type, name)
+    return api_ok({"address": address, "type": server_type, "name": name})
+
+
+async def api_remove_server(request):
+    if not await api_auth(request):
+        return api_err("Brak autoryzacji", 401)
+    clear_server()
+    return api_ok()
+
+
+async def api_set_kary(request):
+    if not await api_auth(request):
+        return api_err("Brak autoryzacji", 401)
+    try:
+        body = await request.json()
+    except Exception:
+        return api_err("Zły JSON")
+    try:
+        guild = bot.get_guild(int(body.get("guild_id")))
+        channel = guild.get_channel(int(body.get("channel_id")))
+    except Exception:
+        return api_err("Zły serwer lub kanał")
+    if guild is None or channel is None:
+        return api_err("Nie znaleziono serwera lub kanału")
+    cfg = load_json(CONFIG_FILE, {})
+    g = cfg.setdefault(str(guild.id), {})
+    g["kary_channel"] = channel.id
+    save_json(CONFIG_FILE, cfg)
+    return api_ok({"kary_channel": channel.id})
+
+
+async def api_prop(request):
+    if not await api_auth(request):
+        return api_err("Brak autoryzacji", 401)
+    try:
+        body = await request.json()
+    except Exception:
+        return api_err("Zły JSON")
+    action = body.get("action")
+    try:
+        guild_id = str(int(body.get("guild_id")))
+        channel_id = int(body.get("channel_id"))
+    except Exception:
+        return api_err("Zły serwer lub kanał")
+    cfg = load_json(CONFIG_FILE, {})
+    g = cfg.setdefault(guild_id, {})
+    lst = g.setdefault("propozycje", [])
+    if action == "add":
+        if channel_id not in lst:
+            lst.append(channel_id)
+    elif action == "remove":
+        if channel_id in lst:
+            lst.remove(channel_id)
+    else:
+        return api_err("Akcja: add albo remove")
+    save_json(CONFIG_FILE, cfg)
+    return api_ok({"propozycje": lst})
+
+
+async def api_channels(request):
+    if not await api_auth(request):
+        return api_err("Brak autoryzacji", 401)
+    try:
+        guild = bot.get_guild(int(request.query.get("guild_id")))
+    except Exception:
+        guild = None
+    if guild is None:
+        return api_err("Nie znaleziono serwera")
+    return api_ok({"channels": [{"id": str(c.id), "name": c.name}
+                                for c in guild.text_channels]})
+
+
+async def api_mc_status(request):
+    if not await api_auth(request):
+        return api_err("Brak autoryzacji", 401)
+    address, server_type, name = load_server()
+    if not address:
+        return api_err("Brak serwera na liście")
+    data = await asyncio.to_thread(fetch_mc_status, address, server_type)
+    data.pop("favicon", None)
+    data.pop("sample", None)
+    return api_ok({"server": {"address": address, "type": server_type, "name": name},
+                   "status": data})
+
+
+async def start_api():
+    if not API_KEY:
+        print("API panelu wylaczone (brak API_KEY).")
+        return
+    app = web.Application()
+    app.add_routes([
+        web.get("/overview", api_overview),
+        web.post("/server", api_set_server),
+        web.delete("/server", api_remove_server),
+        web.post("/kary", api_set_kary),
+        web.post("/propozycje", api_prop),
+        web.get("/channels", api_channels),
+        web.get("/mcstatus", api_mc_status),
+    ])
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", API_PORT).start()
+    print(f"API panelu slucha na porcie {API_PORT}", flush=True)
 
 
 bot.run(TOKEN)
