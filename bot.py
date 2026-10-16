@@ -1766,36 +1766,52 @@ class TicketModal(discord.ui.Modal):
             embed.add_field(name="Nick", value=nick, inline=True)
         embed.add_field(name="Opis", value=opis[:1000], inline=False)
         embed.timestamp = discord.utils.utcnow()
-        try:
-            post = await interaction.channel.send(embed=embed)
-        except Exception:
-            await interaction.followup.send("⚠️ Nie mogę wysłać (brak uprawnień?).", ephemeral=True)
-            return
-        try:
-            name = f"{interaction.user.name}-zgłoszenie"[:90] or "zgłoszenie"
-            thread = await post.create_thread(name=name, auto_archive_duration=1440)
-        except Exception:
-            await interaction.followup.send("⚠️ Nie mogę utworzyć wątku (brak uprawnień?).", ephemeral=True)
-            return
+        overwrites = {
+            interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True,
+                                                          read_message_history=True,
+                                                          attach_files=True, embed_links=True),
+        }
+        for r in interaction.guild.roles:
+            if r.is_bot_managed():
+                continue
+            if r.permissions.administrator or r.permissions.manage_messages:
+                overwrites.setdefault(r, discord.PermissionOverwrite(
+                    view_channel=True, send_messages=True, read_message_history=True))
         admin_role = discord.utils.get(interaction.guild.roles, name="Administracja")
+        if admin_role is not None and admin_role not in overwrites:
+            overwrites[admin_role] = discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True)
+        base = re.sub(r"[^a-z0-9]+", "-", interaction.user.name.lower()).strip("-") or "zgloszenie"
+        try:
+            channel = await interaction.guild.create_text_channel(
+                name=f"{base}-zgloszenie"[:90],
+                category=interaction.channel.category,
+                overwrites=overwrites,
+                reason=f"Ticket: {cat['label']}")
+        except Exception:
+            await interaction.followup.send("⚠️ Nie mogę utworzyć kanału (bot potrzebuje Zarządzania kanałami).",
+                                            ephemeral=True)
+            return
         ping = admin_role.mention if admin_role else "(nie znaleziono roli Administracja)"
         start = [ping, f"**{cat['label']}** — {interaction.user.mention}"]
         if nick:
             start.append(f"**Nick:** {nick}")
         start.append(f"**Opis:** {opis[:1500]}")
         try:
-            await thread.send("\n".join(start), view=CloseTicketView())
+            await channel.send(embed=embed)
+            await channel.send("\n".join(start), view=CloseTicketView())
         except Exception:
             pass
         tickets = load_json(TICKETS_FILE, {})
-        tickets[str(thread.id)] = {"author": str(interaction.user.id),
-                                   "category": cat["label"],
-                                   "nick": nick,
-                                   "desc": opis[:1500],
-                                   "opened": int(time.time()),
-                                   "guild": str(interaction.guild_id)}
+        tickets[str(channel.id)] = {"author": str(interaction.user.id),
+                                    "category": cat["label"],
+                                    "nick": nick,
+                                    "desc": opis[:1500],
+                                    "opened": int(time.time()),
+                                    "guild": str(interaction.guild_id)}
         save_json(TICKETS_FILE, tickets)
-        await interaction.followup.send(f"✅ Utworzono zgłoszenie: {thread.mention}", ephemeral=True)
+        await interaction.followup.send(f"✅ Utworzono zgłoszenie: {channel.mention}", ephemeral=True)
 
 
 class TicketPanelView(discord.ui.View):
@@ -1863,10 +1879,13 @@ class CloseTicketView(discord.ui.View):
         tickets.pop(str(interaction.channel_id), None)
         save_json(TICKETS_FILE, tickets)
         try:
-            await thread.edit(archived=True, locked=True)
+            await thread.delete(reason="Zamknięcie zgłoszenia")
         except Exception:
             pass
-        await interaction.followup.send("🔒 Zamknięto zgłoszenie.", ephemeral=True)
+        try:
+            await interaction.followup.send("🔒 Zamknięto i usunięto kanał.", ephemeral=True)
+        except Exception:
+            pass
 
 
 tickets_group = app_commands.Group(name="tickets", description="System zgłoszeń")
