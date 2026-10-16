@@ -2,75 +2,92 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FraguMC-bot — panel</title>
 <style>
-:root{--bg:#0d0f14;--card:#161a23;--border:#262c3a;--accent:#7c5cff;--accent2:#9d7bff;
---text:#e8eaf0;--muted:#9aa3b2;--green:#3ddc84;--red:#ff5c5c}
+:root{--bg:#0a0a0e;--side:#101014;--card:#141419;--border:#23232c;--lime:#a3e635;
+--lime-dim:#3f4a1e;--gold:#e8b64c;--text:#f0f0f2;--muted:#8a8a95;--red:#ff6b6b}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;display:flex;min-height:100vh}
-aside{width:230px;background:#10131a;border-right:1px solid var(--border);padding:20px 14px;flex-shrink:0}
-aside h1{font-size:18px;margin-bottom:4px}
-aside h1 span{color:var(--accent2)}
-aside p{font-size:12px;color:var(--muted);margin-bottom:20px}
-nav a{display:block;padding:10px 12px;border-radius:8px;color:var(--muted);text-decoration:none;font-size:14px;margin-bottom:4px;cursor:pointer}
-nav a:hover,nav a.active{background:#1e2330;color:var(--text)}
-main{flex:1;padding:28px;max-width:760px}
-.topbar{display:flex;align-items:center;gap:10px;margin-bottom:20px}
+aside{width:250px;background:var(--side);border-right:1px solid var(--border);padding:18px 14px;flex-shrink:0;display:flex;flex-direction:column}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.avatar{width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,#2a1e4f,#0e2a1e);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;border:1px solid var(--border)}
+.brand h1{font-size:16px}.brand p{font-size:11px;color:var(--muted)}
+.search{background:#0c0c10;border:1px solid var(--lime-dim);border-radius:20px;padding:8px 14px;margin:14px 0;font-size:13px;color:var(--muted)}
+.search input{background:none;border:none;outline:none;color:var(--text);width:100%;font-size:13px}
+.navsec{font-size:11px;letter-spacing:1px;color:var(--muted);margin:14px 4px 6px}
+nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;color:var(--muted);text-decoration:none;font-size:14px;margin-bottom:2px;cursor:pointer;border-left:3px solid transparent}
+nav a:hover{background:#1a1a21;color:var(--text)}
+nav a.active{background:#1c1c22;color:var(--text);border-left-color:var(--lime)}
+.savebtn{margin-top:auto;background:transparent;border:1px solid var(--lime);color:var(--text);border-radius:20px;padding:10px;font-size:14px;cursor:pointer}
+.savebtn:hover{background:#1a220e}
+main{flex:1;padding:30px;max-width:800px}
+.topbar{display:flex;align-items:center;gap:10px;margin-bottom:22px}
 .dot{width:10px;height:10px;border-radius:50%;background:var(--red)}
-.dot.on{background:var(--green)}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px}
-.card h3{font-size:15px;margin-bottom:12px}
-label{display:block;font-size:13px;color:var(--muted);margin-top:10px}
-input,select{width:100%;background:#0f1320;border:1px solid var(--border);border-radius:8px;color:var(--text);padding:9px 10px;margin-top:4px;font-size:14px}
-input:focus,select:focus{outline:none;border-color:var(--accent)}
-button{background:var(--accent);border:none;border-radius:8px;color:#fff;padding:9px 16px;margin:12px 8px 0 0;font-size:14px;cursor:pointer}
-button:hover{background:var(--accent2)}
-button.ghost{background:#232938}
-button.danger{background:#3a1d22;color:#ff8f8f}
-pre{background:#0b0e13;border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:10px;font-size:12px;white-space:pre-wrap;max-height:220px;overflow:auto}
-#msg{font-size:14px;margin-bottom:6px;min-height:20px}
+.dot.on{background:var(--lime);box-shadow:0 0 8px var(--lime)}
+#msg{font-size:14px}
+h2.ptitle{font-size:26px;margin-bottom:18px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.card h3{font-size:16px;margin-bottom:4px}
+.card .desc{font-size:13px;color:var(--muted);margin-bottom:12px}
+label{display:block;font-size:13px;color:var(--muted);margin-top:12px}
+input,select{width:100%;background:#0c0c10;border:1px solid var(--border);border-radius:8px;color:var(--text);padding:10px;margin-top:5px;font-size:14px}
+input:focus,select:focus{outline:none;border-color:var(--lime)}
+button{background:transparent;border:1px solid var(--lime);border-radius:20px;color:var(--text);padding:9px 20px;margin:14px 8px 0 0;font-size:14px;cursor:pointer}
+button:hover{background:#1a220e}
+button.solid{background:var(--lime);color:#111;font-weight:700}
+button.solid:hover{background:#b8f55a}
+button.danger{border-color:#5c2626;color:#ff8f8f}
+pre{background:#0b0b0f;border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:10px;font-size:12px;white-space:pre-wrap;max-height:220px;overflow:auto}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.promo{border:1px solid var(--gold);border-radius:12px;padding:20px;margin-bottom:16px;background:linear-gradient(180deg,#171208,#121212)}
+.promo h3{color:var(--gold);font-size:18px}
 @media(max-width:700px){body{flex-direction:column}aside{width:100%}main{padding:16px}.grid2{grid-template-columns:1fr}}
 </style></head><body>
 <aside>
-<h1>FraguMC <span>panel</span></h1>
-<p>Konfiguracja bota Discord</p>
+<div class="brand"><div class="avatar">F</div><div><h1>FraguMC</h1><p>panel konfiguracyjny</p></div></div>
+<div class="search"><input placeholder="Szukaj..."></div>
+<div class="navsec">KONFIGURACJA</div>
 <nav>
 <a data-t="sec-conn" class="active">🔌 Połączenie</a>
 <a data-t="sec-srv">🖥️ Serwer Discord</a>
 <a data-t="sec-mc">⛏️ Minecraft</a>
 <a data-t="sec-kary">🚫 Kanał kar</a>
 <a data-t="sec-prop">💡 Propozycje</a>
-</nav></aside>
+</nav>
+<button class="savebtn" onclick="connect()">Połącz / Odśwież</button>
+</aside>
 <main>
 <div class="topbar"><div class="dot" id="dot"></div><span id="msg">Nie połączono</span></div>
+<h2 class="ptitle">Konfiguracja bota</h2>
 
 <section class="card" id="sec-conn"><h3>🔌 Połączenie z botem</h3>
+<div class="desc">Dane do API bota z hostingu.</div>
 <div class="grid2">
 <label>Host<input id="host" value="fi15.bot-hosting.net"></label>
 <label>Port<input id="port" value="26269"></label>
 </div>
 <label>Klucz API<input id="key" type="password" placeholder="wklej API_KEY"></label>
-<button onclick="connect()">Połącz</button></section>
+<button class="solid" onclick="connect()">Połącz</button></section>
 
 <section class="card" id="sec-srv"><h3>🖥️ Serwer Discord</h3>
-<label>Wybierz serwer<select id="guild"></select></label></section>
+<div class="desc">Wybierz serwer, który konfigurujesz.</div>
+<label>Serwer<select id="guild"></select></label></section>
 
 <section class="card" id="sec-mc"><h3>⛏️ Serwer Minecraft</h3>
+<div class="desc">Serwer pokazywany w /status i auto-statusie.</div>
 <label>Adres (IP / domena)<input id="mc_addr"></label>
 <label>Nazwa<input id="mc_name"></label>
-<button onclick="saveServer()">Zapisz</button>
-<button class="danger" onclick="delServer()">Usuń</button>
-<button class="ghost" onclick="checkStatus()">Sprawdź status</button>
+<button class="solid" onclick="saveServer()">Zapisz</button><button class="danger" onclick="delServer()">Usuń</button><button onclick="checkStatus()">Status</button>
 <pre id="mcstatus">—</pre></section>
 
 <section class="card" id="sec-kary"><h3>🚫 Kanał kar</h3>
+<div class="desc">Tu bot zgłasza warny, muty, kicki i bany.</div>
 <label>Kanał<select id="kary"></select></label>
-<button onclick="saveKary()">Zapisz kanał kar</button></section>
+<button class="solid" onclick="saveKary()">Zapisz</button></section>
 
 <section class="card" id="sec-prop"><h3>💡 Kanały propozycji</h3>
+<div class="desc">Wiadomości zamieniane na głosowania z wątkiem.</div>
 <label>Aktywne kanały</label><pre id="proplist">—</pre>
 <label>Kanał<select id="propchan"></select></label>
-<button onclick="propAdd()">Dodaj</button>
-<button class="danger" onclick="propDel()">Usuń</button></section>
+<button class="solid" onclick="propAdd()">Dodaj</button><button class="danger" onclick="propDel()">Usuń</button></section>
 </main>
 
 <script>
@@ -84,7 +101,8 @@ function base(){return `http://${document.getElementById('host').value.trim()}:$
 function hdrs(){return {'Content-Type':'application/json','X-API-Key':document.getElementById('key').value.trim()};}
 async function jget(p){const r=await fetch(base()+p,{headers:hdrs()});return r.json();}
 async function jpost(p,b){const r=await fetch(base()+p,{method:'POST',headers:hdrs(),body:JSON.stringify(b)});return r.json();}
-function say(t,ok){const m=document.getElementById('msg');m.textContent=t;m.style.color=ok===false?'var(--red)':'var(--green)';
+function say(t,ok){const m=document.getElementById('msg');m.textContent=t;
+  m.style.color=ok===false?'var(--red)':'var(--lime)';
   document.getElementById('dot').classList.toggle('on',ok!==false&&t!=='Nie połączono');}
 function gid(){return document.getElementById('guild').value;}
 function cname(id){const c=channels.find(x=>String(x.id)===String(id));return c?'#'+c.name:id;}
