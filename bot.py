@@ -292,6 +292,8 @@ PERM_FUNCS = [
     ("autostatus", "Auto-status"),
     ("server", "Serwer MC"),
     ("config", "Konfiguracja"),
+    ("userinfo", "Userinfo"),
+    ("clear", "Clear"),
 ]
 
 MOD_LABELS = {
@@ -811,6 +813,62 @@ async def giveaway_loop():
             if not module_on(gw.get("guild"), "giveawaye"):
                 continue
             await end_giveaway(mid)
+
+
+@bot.tree.command(name="userinfo", description="Info o użytkowniku")
+@app_commands.guild_only()
+@app_commands.check(require_perm("userinfo", "manage_messages"))
+async def userinfo(interaction: discord.Interaction, uzytkownik: discord.Member):
+    embed = discord.Embed(title=str(uzytkownik), color=discord.Color.blurple())
+    try:
+        embed.set_thumbnail(url=uzytkownik.display_avatar.url)
+    except Exception:
+        pass
+    embed.add_field(name="ID", value=f"`{uzytkownik.id}`", inline=True)
+    embed.add_field(name="Bot", value="tak" if uzytkownik.bot else "nie", inline=True)
+    embed.add_field(name="Konto od", value=f"<t:{int(uzytkownik.created_at.timestamp())}:D>", inline=True)
+    if uzytkownik.joined_at:
+        embed.add_field(name="Na serwerze od", value=f"<t:{int(uzytkownik.joined_at.timestamp())}:D>", inline=True)
+    role = [r.mention for r in uzytkownik.roles if r.name != "@everyone"][:10]
+    embed.add_field(name=f"Role ({len(uzytkownik.roles) - 1})", value=", ".join(role) if role else "—", inline=False)
+    try:
+        if uzytkownik.is_timed_out():
+            embed.add_field(name="Wyciszony do", value=f"<t:{int(uzytkownik.timed_out_until.timestamp())}:R>", inline=True)
+    except Exception:
+        pass
+    warns = load_json(WARNS_FILE, {}).get(str(interaction.guild_id), {}).get(str(uzytkownik.id), [])
+    embed.add_field(name="Warny", value=str(len(warns)), inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="clear", description="Usuwa wiadomości z kanału")
+@app_commands.guild_only()
+@app_commands.check(require_perm("clear", "manage_messages"))
+async def clear(interaction: discord.Interaction, ilosc: app_commands.Range[int, 1, 100],
+                uzytkownik: discord.Member = None):
+    await interaction.response.defer(ephemeral=True)
+    channel = interaction.channel
+    try:
+        to_del = []
+        async for m in channel.history(limit=500):
+            if len(to_del) >= ilosc:
+                break
+            if uzytkownik is None or m.author.id == uzytkownik.id:
+                to_del.append(m)
+    except Exception:
+        await interaction.followup.send("⚠️ Nie mogę czytać historii tego kanału.", ephemeral=True)
+        return
+    for i in range(0, len(to_del), 100):
+        chunk = to_del[i:i + 100]
+        try:
+            await channel.delete_messages(chunk)
+        except Exception:
+            for m in chunk:
+                try:
+                    await m.delete()
+                except Exception:
+                    pass
+    await interaction.followup.send(f"🧹 Usunięto {len(to_del)} wiadomości.", ephemeral=True)
 
 
 giveaway_group = app_commands.Group(name="giveaway", description="Giveawaye")
