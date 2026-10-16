@@ -835,4 +835,82 @@ async def config_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=ConfigView(), ephemeral=True)
 
 
+# ---------- Propozycje ----------
+
+def get_propozycje(guild_id):
+    cfg = load_json(CONFIG_FILE, {})
+    return cfg.get(str(guild_id), {}).get("propozycje", [])
+
+
+propozycje_group = app_commands.Group(name="propozycje", description="Propozycje")
+prop_kanal = app_commands.Group(name="kanal", description="Kanały propozycji")
+
+
+@prop_kanal.command(name="dodaj", description="Dodaje kanał propozycji")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(manage_guild=True)
+async def prop_dodaj(interaction: discord.Interaction, kanal: discord.TextChannel):
+    cfg = load_json(CONFIG_FILE, {})
+    g = cfg.setdefault(str(interaction.guild_id), {})
+    lst = g.setdefault("propozycje", [])
+    if kanal.id in lst:
+        await interaction.response.send_message("Ten kanał już jest na liście.", ephemeral=True)
+        return
+    lst.append(kanal.id)
+    save_json(CONFIG_FILE, cfg)
+    await interaction.response.send_message(f"✅ Dodano kanał propozycji: {kanal.mention}", ephemeral=True)
+
+
+@prop_kanal.command(name="usun", description="Usuwa kanał propozycji")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(manage_guild=True)
+async def prop_usun(interaction: discord.Interaction, kanal: discord.TextChannel):
+    cfg = load_json(CONFIG_FILE, {})
+    g = cfg.setdefault(str(interaction.guild_id), {})
+    lst = g.setdefault("propozycje", [])
+    if kanal.id not in lst:
+        await interaction.response.send_message("Tego kanału nie ma na liście.", ephemeral=True)
+        return
+    lst.remove(kanal.id)
+    save_json(CONFIG_FILE, cfg)
+    await interaction.response.send_message(f"🗑️ Usunięto kanał propozycji: {kanal.mention}", ephemeral=True)
+
+
+@prop_kanal.command(name="lista", description="Lista kanałów propozycji")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(manage_guild=True)
+async def prop_lista(interaction: discord.Interaction):
+    ids = get_propozycje(interaction.guild_id)
+    if not ids:
+        await interaction.response.send_message("Brak kanałów propozycji.", ephemeral=True)
+        return
+    lines = []
+    for cid in ids:
+        ch = interaction.guild.get_channel(cid)
+        lines.append(ch.mention if ch else f"nieznany kanał ({cid})")
+    await interaction.response.send_message("Kanały propozycji: " + ", ".join(lines), ephemeral=True)
+
+
+propozycje_group.add_command(prop_kanal)
+bot.tree.add_command(propozycje_group)
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.guild is None or message.author.bot:
+        return
+    if message.channel.id not in get_propozycje(message.guild.id):
+        return
+    try:
+        await message.add_reaction("✅")
+        await message.add_reaction("❌")
+    except Exception:
+        pass
+    try:
+        tytul = (message.content or "Propozycja").strip().split("\n")[0][:80] or "Propozycja"
+        await message.create_thread(name=f"💡 {tytul}", auto_archive_duration=1440)
+    except Exception:
+        pass
+
+
 bot.run(TOKEN)
