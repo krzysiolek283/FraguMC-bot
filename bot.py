@@ -853,7 +853,7 @@ class KaryChannelSelect(discord.ui.ChannelSelect):
         ch = self.values[0]
         cfg = load_json(CONFIG_FILE, {})
         g = cfg.setdefault(str(interaction.guild_id), {})
-        g["kary_channel"] = ch.id
+        g["kary_channel"] = str(ch.id)
         save_json(CONFIG_FILE, cfg)
         await interaction.response.send_message(f"✅ Kanał kar ustawiony: {ch.mention}", ephemeral=True)
 
@@ -1068,9 +1068,9 @@ async def api_set_kary(request):
         return api_err("Nie znaleziono serwera lub kanału")
     cfg = load_json(CONFIG_FILE, {})
     g = cfg.setdefault(str(guild.id), {})
-    g["kary_channel"] = channel.id
+    g["kary_channel"] = str(channel.id)
     save_json(CONFIG_FILE, cfg)
-    return api_ok({"kary_channel": channel.id})
+    return api_ok({"kary_channel": str(channel.id)})
 
 
 async def api_prop(request):
@@ -1083,7 +1083,7 @@ async def api_prop(request):
     action = body.get("action")
     try:
         guild_id = str(int(body.get("guild_id")))
-        channel_id = int(body.get("channel_id"))
+        channel_id = str(int(body.get("channel_id")))
     except Exception:
         return api_err("Zły serwer lub kanał")
     cfg = load_json(CONFIG_FILE, {})
@@ -1170,5 +1170,29 @@ async def start_api():
     await web.TCPSite(runner, "0.0.0.0", API_PORT).start()
     print(f"API panelu slucha na porcie {API_PORT}", flush=True)
 
+
+def migrate_config():
+    """ID Discorda jako tekst (JS gubi precyzje duzych liczb)."""
+    try:
+        cfg = load_json(CONFIG_FILE, {})
+        changed = False
+        for g in cfg.values():
+            if not isinstance(g, dict):
+                continue
+            if "kary_channel" in g and not isinstance(g["kary_channel"], str):
+                g["kary_channel"] = str(g["kary_channel"])
+                changed = True
+            if isinstance(g.get("propozycje"), list):
+                new_lst = [x if isinstance(x, str) else str(x) for x in g["propozycje"]]
+                if new_lst != g["propozycje"]:
+                    g["propozycje"] = new_lst
+                    changed = True
+        if changed:
+            save_json(CONFIG_FILE, cfg)
+    except Exception:
+        pass
+
+
+migrate_config()
 
 bot.run(TOKEN)
