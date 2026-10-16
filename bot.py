@@ -34,7 +34,7 @@ SERVER_NAME = "FraguMC"  # domyslna nazwa, gdy nie podano w /server add
 SERVER_FILE = os.path.join(os.path.dirname(__file__), "server.json")
 
 AUTOSTATUS_FILE = os.path.join(os.path.dirname(__file__), "autostatus.json")
-AUTOSTATUS_MINUTES = 5
+AUTOSTATUS_MINUTES = 1
 
 intents = discord.Intents.default()
 intents.message_content = True
