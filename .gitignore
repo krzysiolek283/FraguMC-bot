@@ -8,5 +8,6 @@ giveaways.json
 config.json
 perms.json
 templates.json
+tickets.json
 __pycache__/
 *.pyc

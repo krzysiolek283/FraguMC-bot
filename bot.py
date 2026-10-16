@@ -238,6 +238,8 @@ async def on_ready():
     for guild in bot.guilds:
         await bot.tree.sync(guild=guild)
     bot.add_view(GiveawayView())
+    bot.add_view(TicketPanelView())
+    bot.add_view(CloseTicketView())
     for _loop in (autostatus_loop, giveaway_loop, tempban_loop):
         if not _loop.is_running():
             _loop.start()
@@ -295,6 +297,7 @@ PERM_FUNCS = [
     ("userinfo", "Userinfo"),
     ("clear", "Clear"),
     ("embed", "Embed"),
+    ("tickety", "Tickety"),
 ]
 
 MOD_LABELS = {
@@ -1708,6 +1711,222 @@ async def szablon_usun(interaction: discord.Interaction, nazwa: str):
 
 
 bot.tree.add_command(szablon_group)
+
+
+bot.tree.add_command(szablon_group)
+
+
+# ---------- Tickety ----------
+
+TICKETS_FILE = os.path.join(os.path.dirname(__file__), "tickets.json")
+
+TICKET_CATS = {
+    "mc": {"label": "Minecraft", "style": discord.ButtonStyle.success,
+           "title": "nowe zgłoszenie - minecraft", "need_nick": True},
+    "dc": {"label": "Discord", "style": discord.ButtonStyle.success,
+           "title": "nowe zgłoszenie - discord", "need_nick": False},
+    "blad": {"label": "Błąd/Skarga", "style": discord.ButtonStyle.danger,
+             "title": "nowe zgłoszenie - błąd skarga", "need_nick": False},
+    "inne": {"label": "Inne", "style": discord.ButtonStyle.primary,
+             "title": "nowe zgłoszenie - inne", "need_nick": False},
+}
+
+
+def ticket_panel_embed():
+    embed = discord.Embed(
+        title="Tickety FraguMc",
+        description="Na tym kanale możesz stworzyć własne zgłoszenie dotyczące różnych spraw. "
+                    "Jeśli masz problem/pytanie - stwórz zgłoszenie.\n\n"
+                    "Wybierz kategorię, która najbardziej pasuje do twojego zgłoszenia.",
+        color=discord.Color.blurple())
+    return embed
+
+
+class TicketModal(discord.ui.Modal):
+    def __init__(self, cat):
+        super().__init__(title=TICKET_CATS[cat]["title"][:45])
+        self.cat = cat
+        if TICKET_CATS[cat]["need_nick"]:
+            self.nick = discord.ui.TextInput(label="Twój nick*", max_length=50)
+            self.add_item(self.nick)
+        self.opis = discord.ui.TextInput(label="Opis problemu*", style=discord.TextStyle.paragraph,
+                                         max_length=1500)
+        self.add_item(self.opis)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        cat = TICKET_CATS[self.cat]
+        nick = self.nick.value.strip() if cat["need_nick"] else None
+        opis = self.opis.value.strip()
+        if not opis or (cat["need_nick"] and not nick):
+            await interaction.response.send_message("⚠️ Uzupełnij wszystkie pola.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        embed = discord.Embed(title=f"🎫 {cat['label']} — {interaction.user}",
+                              color=discord.Color.blurple())
+        embed.add_field(name="Zgłaszający", value=interaction.user.mention, inline=True)
+        embed.add_field(name="Kategoria", value=cat["label"], inline=True)
+        if nick:
+            embed.add_field(name="Nick", value=nick, inline=True)
+        embed.add_field(name="Opis", value=opis[:1000], inline=False)
+        embed.timestamp = discord.utils.utcnow()
+        try:
+            post = await interaction.channel.send(embed=embed)
+        except Exception:
+            await interaction.followup.send("⚠️ Nie mogę wysłać (brak uprawnień?).", ephemeral=True)
+            return
+        try:
+            name = f"{interaction.user.name}-zgłoszenie"[:90] or "zgłoszenie"
+            thread = await post.create_thread(name=name, auto_archive_duration=1440)
+        except Exception:
+            await interaction.followup.send("⚠️ Nie mogę utworzyć wątku (brak uprawnień?).", ephemeral=True)
+            return
+        admin_role = discord.utils.get(interaction.guild.roles, name="Administracja")
+        ping = admin_role.mention if admin_role else "(nie znaleziono roli Administracja)"
+        start = [ping, f"**{cat['label']}** — {interaction.user.mention}"]
+        if nick:
+            start.append(f"**Nick:** {nick}")
+        start.append(f"**Opis:** {opis[:1500]}")
+        try:
+            await thread.send("\n".join(start), view=CloseTicketView())
+        except Exception:
+            pass
+        tickets = load_json(TICKETS_FILE, {})
+        tickets[str(thread.id)] = {"author": str(interaction.user.id),
+                                   "category": cat["label"],
+                                   "nick": nick,
+                                   "desc": opis[:1500],
+                                   "opened": int(time.time()),
+                                   "guild": str(interaction.guild_id)}
+        save_json(TICKETS_FILE, tickets)
+        await interaction.followup.send(f"✅ Utworzono zgłoszenie: {thread.mention}", ephemeral=True)
+
+
+class TicketPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        for key, cat in TICKET_CATS.items():
+            btn = discord.ui.Button(label=cat["label"], style=cat["style"],
+                                    custom_id=f"ticket_{key}")
+
+            async def cb(interaction: discord.Interaction, k=key):
+                await interaction.response.send_modal(TicketModal(k))
+
+            btn.callback = cb
+            self.add_item(btn)
+
+
+class CloseTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Zamknij zgłoszenie", style=discord.ButtonStyle.danger,
+                       emoji="🔒", custom_id="ticket_close")
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        tickets = load_json(TICKETS_FILE, {})
+        t = tickets.get(str(interaction.channel_id))
+        if not t:
+            await interaction.response.send_message("⚠️ To nie jest aktywny wątek zgłoszenia.",
+                                                    ephemeral=True)
+            return
+        is_author = str(interaction.user.id) == t["author"]
+        can_mod = isinstance(interaction.user, discord.Member) and (
+            interaction.user.guild_permissions.manage_messages
+            or interaction.user.guild_permissions.administrator)
+        if not (is_author or can_mod):
+            await interaction.response.send_message("⛔ Tylko autor lub moderacja.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        thread = interaction.channel
+        lines = []
+        try:
+            async for m in thread.history(limit=500, oldest_first=True):
+                txt = m.content or ("[embed]" if m.embeds else "[plik]" if m.attachments else "")
+                lines.append(f"[{m.created_at:%Y-%m-%d %H:%M}] {m.author}: {txt}")
+        except Exception:
+            pass
+        body = "\n".join(lines) or "(brak wiadomości)"
+        cfg = load_json(CONFIG_FILE, {}).get(str(interaction.guild_id), {})
+        tch_id = cfg.get("transcripts_channel")
+        if tch_id:
+            try:
+                tch = interaction.guild.get_channel(int(tch_id))
+                if tch is None:
+                    tch = await interaction.guild.fetch_channel(int(tch_id))
+                summary = discord.Embed(title=f"📄 Transkrypt — {thread.name}",
+                                        color=discord.Color.greyple())
+                summary.add_field(name="Kategoria", value=t.get("category", "—"), inline=True)
+                summary.add_field(name="Zamknął", value=interaction.user.mention, inline=True)
+                summary.add_field(name="Otwarto", value=f"<t:{t.get('opened', 0)}:R>", inline=True)
+                await tch.send(
+                    embed=summary,
+                    file=discord.File(fp=io.BytesIO(body.encode("utf-8", "replace")),
+                                      filename=f"transcript-{thread.id}.txt"))
+            except Exception:
+                pass
+        tickets.pop(str(interaction.channel_id), None)
+        save_json(TICKETS_FILE, tickets)
+        try:
+            await thread.edit(archived=True, locked=True)
+        except Exception:
+            pass
+        await interaction.followup.send("🔒 Zamknięto zgłoszenie.", ephemeral=True)
+
+
+tickets_group = app_commands.Group(name="tickets", description="System zgłoszeń")
+
+
+@tickets_group.command(name="send", description="Wysyła panel zgłoszeń")
+@app_commands.guild_only()
+@app_commands.check(require_perm("tickety", "manage_guild"))
+async def tickets_send(interaction: discord.Interaction, kanal: discord.TextChannel = None):
+    channel = kanal or interaction.channel
+    try:
+        await channel.send(embed=ticket_panel_embed(), view=TicketPanelView())
+    except Exception:
+        await interaction.response.send_message("⚠️ Nie mogę wysłać (brak uprawnień?).", ephemeral=True)
+        return
+    dest = f" na {channel.mention}" if kanal else ""
+    await interaction.response.send_message(f"✅ Panel zgłoszeń wysłany{dest}.", ephemeral=True)
+
+
+bot.tree.add_command(tickets_group)
+
+
+transcripts_group = app_commands.Group(name="transcripts", description="Kanał transkryptów")
+
+
+@transcripts_group.command(name="add", description="Ustawia kanał transkryptów")
+@app_commands.guild_only()
+@app_commands.check(require_perm("tickety", "manage_guild"))
+async def transcripts_add(interaction: discord.Interaction, kanal: discord.TextChannel):
+    cfg = load_json(CONFIG_FILE, {})
+    g = cfg.setdefault(str(interaction.guild_id), {})
+    g["transcripts_channel"] = str(kanal.id)
+    save_json(CONFIG_FILE, cfg)
+    await interaction.response.send_message(f"✅ Kanał transkryptów: {kanal.mention}", ephemeral=True)
+
+
+@transcripts_group.command(name="lista", description="Pokazuje kanał transkryptów")
+@app_commands.guild_only()
+@app_commands.check(require_perm("tickety", "manage_guild"))
+async def transcripts_lista(interaction: discord.Interaction):
+    tch_id = load_json(CONFIG_FILE, {}).get(str(interaction.guild_id), {}).get("transcripts_channel")
+    ch = interaction.guild.get_channel(int(tch_id)) if tch_id else None
+    await interaction.response.send_message(
+        f"Kanał transkryptów: {ch.mention if ch else '— nie ustawiono'}", ephemeral=True)
+
+
+@transcripts_group.command(name="usun", description="Usuwa kanał transkryptów")
+@app_commands.guild_only()
+@app_commands.check(require_perm("tickety", "manage_guild"))
+async def transcripts_usun(interaction: discord.Interaction):
+    cfg = load_json(CONFIG_FILE, {})
+    cfg.setdefault(str(interaction.guild_id), {}).pop("transcripts_channel", None)
+    save_json(CONFIG_FILE, cfg)
+    await interaction.response.send_message("🗑️ Usunięto kanał transkryptów.", ephemeral=True)
+
+
+bot.tree.add_command(transcripts_group)
 
 migrate_config()
 
