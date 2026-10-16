@@ -1000,6 +1000,16 @@ def get_propozycje(guild_id):
     return cfg.get(str(guild_id), {}).get("propozycje", [])
 
 
+def get_propozycje_ids(guild_id):
+    ids = set()
+    for x in get_propozycje(guild_id):
+        try:
+            ids.add(int(x))
+        except Exception:
+            pass
+    return ids
+
+
 propozycje_group = app_commands.Group(name="propozycje", description="Propozycje")
 prop_kanal = app_commands.Group(name="kanal", description="Kanały propozycji")
 
@@ -1044,7 +1054,10 @@ async def prop_lista(interaction: discord.Interaction):
         return
     lines = []
     for cid in ids:
-        ch = interaction.guild.get_channel(cid)
+        try:
+            ch = interaction.guild.get_channel(int(cid))
+        except Exception:
+            ch = None
         lines.append(ch.mention if ch else f"nieznany kanał ({cid})")
     await interaction.response.send_message("Kanały propozycji: " + ", ".join(lines), ephemeral=True)
 
@@ -1057,7 +1070,7 @@ bot.tree.add_command(propozycje_group)
 async def on_message(message: discord.Message):
     if message.guild is None or message.author.bot:
         return
-    if message.channel.id not in get_propozycje(message.guild.id):
+    if message.channel.id not in get_propozycje_ids(message.guild.id):
         return
     if not module_on(message.guild.id, "propozycje"):
         return
