@@ -151,10 +151,6 @@ def build_status_embed(data, address, name):
         inline=True,
     )
     embed.add_field(name="Wersja", value=str(data["version"]), inline=True)
-    motd = (data.get("motd") or "—").strip() or "—"
-    if len(motd) > 900:
-        motd = motd[:900] + "…"
-    embed.add_field(name="Opis (MOTD)", value=motd, inline=False)
 
     favicon_file = None
     if data.get("favicon"):
