@@ -294,6 +294,7 @@ PERM_FUNCS = [
     ("config", "Konfiguracja"),
     ("userinfo", "Userinfo"),
     ("clear", "Clear"),
+    ("embed", "Embed"),
 ]
 
 MOD_LABELS = {
@@ -1374,6 +1375,98 @@ def migrate_config():
             save_json(CONFIG_FILE, cfg)
     except Exception:
         pass
+
+
+# ---------- Kreator embedów ----------
+
+EMBED_DRAFTS = {}
+
+
+def parse_color(text):
+    if not text or not text.strip():
+        return None
+    t = text.strip().lower().lstrip("#")
+    names = {"red": 0xFF0000, "green": 0x2ECC71, "blue": 0x3498DB,
+             "gold": 0xF1C40F, "blurple": 0x5865F2, "purple": 0x9B59B6}
+    if t in names:
+        return discord.Color(names[t])
+    try:
+        return discord.Color(int(t, 16))
+    except Exception:
+        return None
+
+
+class EmbedModal(discord.ui.Modal, title="Kreator embeda"):
+    def __init__(self, channel_id):
+        super().__init__()
+        self.channel_id = channel_id
+        self.tytul = discord.ui.TextInput(label="Tytuł", max_length=256)
+        self.opis = discord.ui.TextInput(label="Opis", style=discord.TextStyle.paragraph, max_length=4000)
+        self.kolor = discord.ui.TextInput(label="Kolor (hex, np. #7c5cff)", required=False, max_length=20)
+        self.stopka = discord.ui.TextInput(label="Stopka", required=False, max_length=200)
+        self.obraz = discord.ui.TextInput(label="URL obrazka", required=False, max_length=300)
+        self.add_item(self.tytul)
+        self.add_item(self.opis)
+        self.add_item(self.kolor)
+        self.add_item(self.stopka)
+        self.add_item(self.obraz)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        color = parse_color(self.kolor.value) or discord.Color.blurple()
+        embed = discord.Embed(title=self.tytul.value.strip(),
+                              description=self.opis.value.strip() or None,
+                              color=color)
+        if self.stopka.value.strip():
+            embed.set_footer(text=self.stopka.value.strip())
+        if self.obraz.value.strip():
+            try:
+                embed.set_image(url=self.obraz.value.strip())
+            except Exception:
+                pass
+        EMBED_DRAFTS[str(interaction.user.id)] = {"embed": embed.to_dict(),
+                                                   "channel": self.channel_id}
+        await interaction.response.send_message("Podgląd:", embed=embed,
+                                                view=EmbedSendView(), ephemeral=True)
+
+
+class EmbedSendView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=600)
+
+    @discord.ui.button(label="Wyślij", style=discord.ButtonStyle.success, emoji="📨")
+    async def send(self, interaction: discord.Interaction, button: discord.ui.Button):
+        draft = EMBED_DRAFTS.pop(str(interaction.user.id), None)
+        if not draft:
+            await interaction.response.edit_message(content="Szkic wygasł.", embed=None, view=None)
+            return
+        channel = interaction.guild.get_channel(draft["channel"])
+        if channel is None:
+            try:
+                channel = await interaction.guild.fetch_channel(draft["channel"])
+            except Exception:
+                channel = None
+        if channel is None:
+            await interaction.response.edit_message(content="⚠️ Kanał niedostępny.", embed=None, view=None)
+            return
+        try:
+            await channel.send(embed=discord.Embed.from_dict(draft["embed"]))
+        except Exception:
+            await interaction.response.edit_message(content="⚠️ Nie mogę wysłać (brak uprawnień?).", embed=None, view=None)
+            return
+        await interaction.response.edit_message(content=f"✅ Wysłano na {channel.mention}.", embed=None, view=None)
+
+    @discord.ui.button(label="Anuluj", style=discord.ButtonStyle.secondary, emoji="❌")
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        EMBED_DRAFTS.pop(str(interaction.user.id), None)
+        await interaction.response.edit_message(content="Anulowano.", embed=None, view=None)
+
+
+@bot.tree.command(name="embed", description="Kreator embedów")
+@app_commands.guild_only()
+@app_commands.check(require_perm("embed", "manage_messages"))
+async def embed_cmd(interaction: discord.Interaction, kanal: discord.TextChannel = None):
+    target = kanal or interaction.channel
+    await interaction.response.send_modal(EmbedModal(target.id))
 
 
 migrate_config()
