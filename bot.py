@@ -1757,6 +1757,12 @@ class TicketModal(discord.ui.Modal):
         if not opis or (cat["need_nick"] and not nick):
             await interaction.response.send_message("⚠️ Uzupełnij wszystkie pola.", ephemeral=True)
             return
+        tickets = load_json(TICKETS_FILE, {})
+        for t in tickets.values():
+            if t.get("author") == str(interaction.user.id):
+                await interaction.response.send_message(
+                    "⚠️ Masz już otwarte zgłoszenie. Zamknij je przed utworzeniem nowego.", ephemeral=True)
+                return
         await interaction.response.defer(ephemeral=True)
         embed = discord.Embed(title=f"🎫 {cat['label']} — {interaction.user}",
                               color=discord.Color.blurple())
